@@ -13,6 +13,12 @@ export class RoleCarrier {
         delete creep.memory.targetId;
       }
 
+      // 优先检查是否需要帮助静态矿工移动
+      if (this.shouldHelpStaticHarvester(creep)) {
+        this.helpStaticHarvester(creep);
+        return;
+      }
+
       if (creep.memory.working) {
         // 运输模式：将资源运输到需要的地方
         this.deliverResources(creep);
@@ -22,205 +28,293 @@ export class RoleCarrier {
       }
     }
 
-    private static collectResources(creep: Creep): void {
-      let target: Resource | Structure | Tombstone | Ruin | null = null;
+    // 检查是否需要帮助静态矿工移动
+    private static shouldHelpStaticHarvester(creep: Creep): boolean {
+      // 不管有没有携带资源，都可以帮忙移动
+      const staticHarvesters = creep.room.find(FIND_MY_CREEPS, {
+        filter: (c) => c.memory.role === 'staticHarvester' &&
+                       c.memory.targetId &&
+                       c.getActiveBodyparts(MOVE) == 0 && // 只帮助没有 MOVE 部件的静态矿工
+                       !c.pos.isNearTo(new RoomPosition(
+                         parseInt(c.memory.targetId.split(',')[0]),
+                         parseInt(c.memory.targetId.split(',')[1]),
+                         c.room.name
+                       ))
+      });
 
-      // 1. 优先拾取地面掉落的资源
-      const droppedResources = creep.room.find(FIND_DROPPED_RESOURCES);
+      return staticHarvesters.length > 0;
+    }
+
+    // 帮助静态矿工移动到指定位置
+    private static helpStaticHarvester(creep: Creep): void {
+      const target = creep.pos.findClosestByRange(FIND_MY_CREEPS, {
+        filter: function(object) {
+          return object.memory.role === 'staticHarvester' &&
+                 object.memory.targetId &&
+                 object.getActiveBodyparts(MOVE) === 0 &&
+                 !object.pos.isEqualTo(new RoomPosition(
+                   parseInt(object.memory.targetId!.split(',')[0]),
+                   parseInt(object.memory.targetId!.split(',')[1]),
+                   object.room.name
+                 ));
+        }
+      });
+
+      if (target) {
+        creep.say('🚶 帮助移动');
+
+        const targetPos = new RoomPosition(
+          parseInt(target.memory.targetId!.split(',')[0]),
+          parseInt(target.memory.targetId!.split(',')[1]),
+          target.room.name
+        );
+
+        if (target.pos.getRangeTo(targetPos) <= 1) {
+          return;
+        }
+
+        const pullResult = creep.pull(target);
+
+        if (pullResult == ERR_NOT_IN_RANGE) {
+          creep.moveTo(target, { visualizePathStyle: { stroke: '#00ff00' } });
+        } else if (pullResult == OK) {
+          const targetMoveResult = target.move(creep);
+
+          if (creep.pos.isEqualTo(targetPos)) {
+            const freePosition = this.findFreePositionNearTarget(targetPos);
+            if (freePosition) {
+              creep.moveTo(freePosition, { visualizePathStyle: { stroke: '#ff0000' } });
+            }
+          } else {
+            if (creep.pos.isNearTo(targetPos)) {
+              const direction = target.pos.getDirectionTo(targetPos);
+
+              if (direction !== TOP) {
+                const targetMoveResult = target.move(direction);
+                const carrierMoveResult = creep.move(direction);
+              }
+            } else {
+              creep.moveTo(targetPos, {
+                visualizePathStyle: { stroke: '#ffffff' }
+              });
+            }
+          }
+        }
+      }
+    }
+
+    // 在目标附近寻找空闲位置
+    private static findFreePositionNearTarget(targetPos: RoomPosition): RoomPosition | null {
+      // 检查目标周围的8个位置
+      const directions = [TOP, TOP_RIGHT, RIGHT, BOTTOM_RIGHT, BOTTOM, BOTTOM_LEFT, LEFT, TOP_LEFT];
+
+      for (const direction of directions) {
+        const dx = [0, 0, 1, 1, 1, 0, -1, -1, -1];
+        const dy = [0, -1, -1, 0, 1, 1, 1, 0, -1];
+
+        const newX = targetPos.x + dx[direction];
+        const newY = targetPos.y + dy[direction];
+
+        if (newX >= 0 && newX < 50 && newY >= 0 && newY < 50) {
+          const testPos = new RoomPosition(newX, newY, targetPos.roomName);
+
+          // 检查位置是否被占用
+          const creepsAtPos = testPos.lookFor(LOOK_CREEPS);
+          const structuresAtPos = testPos.lookFor(LOOK_STRUCTURES);
+
+          if (creepsAtPos.length === 0 && structuresAtPos.length === 0) {
+            return testPos;
+          }
+        }
+      }
+
+      return null;
+    }
+
+    // 收集资源
+    private static collectResources(creep: Creep): void {
+      let target: Resource | Structure | Ruin | null = null;
+
+      // 1. 优先收集矿点附近掉落的资源（静态矿工产生的）
+      const droppedResources = creep.room.find(FIND_DROPPED_RESOURCES, {
+        filter: (resource) => resource.resourceType === RESOURCE_ENERGY
+      });
+
       if (droppedResources.length > 0) {
-        // 优先拾取能量，其次是其他资源
-        const energyResources = droppedResources.filter(r => r.resourceType === RESOURCE_ENERGY);
-        if (energyResources.length > 0) {
-          target = creep.pos.findClosestByPath(energyResources);
+        // 优先选择矿点附近的掉落资源
+        const sources = creep.room.find(FIND_SOURCES);
+        if (sources.length > 0) {
+          // 找到距离矿点最近的掉落资源
+          let bestResource = droppedResources[0];
+          let bestDistance = Infinity;
+
+          for (const resource of droppedResources) {
+            for (const source of sources) {
+              const distance = resource.pos.getRangeTo(source);
+              if (distance < bestDistance) {
+                bestDistance = distance;
+                bestResource = resource;
+              }
+            }
+          }
+
+          target = bestResource;
         } else {
+          // 如果没有矿点，选择最近的掉落资源
           target = creep.pos.findClosestByPath(droppedResources);
         }
       }
 
-      // 2. 从墓碑中收集资源
+      // 2. 从墓碑收集资源
       if (!target) {
         const tombstones = creep.room.find(FIND_TOMBSTONES, {
-          filter: (tombstone) => tombstone.store.getUsedCapacity() > 0
+          filter: (tombstone) => tombstone.store.getUsedCapacity(RESOURCE_ENERGY) > 0
         });
 
         if (tombstones.length > 0) {
-          target = creep.pos.findClosestByPath(tombstones);
+          const closestTombstone = creep.pos.findClosestByPath(tombstones);
+          if (closestTombstone) {
+            const result = creep.withdraw(closestTombstone, RESOURCE_ENERGY);
+            if (result === ERR_NOT_IN_RANGE) {
+              creep.moveTo(closestTombstone, {
+                visualizePathStyle: { stroke: '#ffaa00' }
+              });
+            } else if (result === OK) {
+              creep.say('🪦');
+            }
+            return; // 直接返回，不执行后续逻辑
+          }
         }
       }
 
-      // 3. 从废墟中收集资源
+      // 3. 从废墟收集资源
       if (!target) {
         const ruins = creep.room.find(FIND_RUINS, {
-          filter: (ruin) => ruin.store.getUsedCapacity() > 0
+          filter: (ruin) => ruin.store.getUsedCapacity(RESOURCE_ENERGY) > 0
         });
 
         if (ruins.length > 0) {
-          target = creep.pos.findClosestByPath(ruins) as Ruin;
+          target = creep.pos.findClosestByPath(ruins);
         }
       }
 
-      // 4. 从满载的容器中转移资源
+      // 4. 从满载的容器收集
       if (!target) {
-        const fullContainers = creep.room.find(FIND_STRUCTURES, {
+        const containers = creep.room.find(FIND_STRUCTURES, {
           filter: (structure) => {
-            return structure.structureType === STRUCTURE_CONTAINER &&
-                   structure.store.getUsedCapacity() > structure.store.getCapacity() * 0.8;
+            return (structure.structureType === STRUCTURE_CONTAINER ||
+                    structure.structureType === STRUCTURE_STORAGE) &&
+                   structure.store.getUsedCapacity(RESOURCE_ENERGY) > 0;
           }
         });
 
-        if (fullContainers.length > 0) {
-          target = creep.pos.findClosestByPath(fullContainers);
+        if (containers.length > 0) {
+          target = creep.pos.findClosestByPath(containers);
         }
       }
 
       // 执行收集
       if (target) {
-        let result: number = ERR_NOT_FOUND;
+        let result: number;
 
         if (target instanceof Resource) {
           result = creep.pickup(target);
-        } else if (target instanceof Tombstone || target instanceof Ruin) {
-          // 从墓碑或废墟中取出所有资源
-          for (const resourceType in target.store) {
-            result = creep.withdraw(target, resourceType as ResourceConstant);
-            if (result === OK) break;
-          }
-        } else if (target instanceof Structure && 'store' in target) {
-          // 从容器中优先取能量
-          if ((target as any).store.getUsedCapacity(RESOURCE_ENERGY) > 0) {
-            result = creep.withdraw(target, RESOURCE_ENERGY);
-          } else {
-            // 取其他资源
-            for (const resourceType in (target as any).store) {
-              result = creep.withdraw(target, resourceType as ResourceConstant);
-              if (result === OK) break;
-            }
-          }
+        } else if (target instanceof Ruin) {
+          result = creep.withdraw(target, RESOURCE_ENERGY);
+        } else {
+          result = creep.withdraw(target, RESOURCE_ENERGY);
         }
 
         if (result === ERR_NOT_IN_RANGE) {
           creep.moveTo(target, {
             visualizePathStyle: { stroke: '#ffaa00' }
           });
+        } else if (result === OK) {
+          creep.say('📦');
         }
       } else {
-        // 如果没有任务，就在房间中央待机
-        const centerFlag = creep.room.find(FIND_FLAGS, {
-          filter: flag => flag.name === 'Center'
-        })[0];
-
-        if (centerFlag) {
-          creep.moveTo(centerFlag);
-        } else if (creep.room.controller) {
-          creep.moveTo(creep.room.controller);
+        // 如果没有可收集的资源，尝试帮助静态矿工移动
+        if (this.shouldHelpStaticHarvester(creep)) {
+          this.helpStaticHarvester(creep);
+        } else {
+          creep.say('等待任务');
+          // 原地等待，不移动到控制器
         }
       }
     }
 
+    // 运输资源
     private static deliverResources(creep: Creep): void {
-      let target: Structure | null = null;
+      let target: Structure | ConstructionSite | null = null;
 
-      // 获取 Creep 携带的主要资源类型
-      const carriedResources = Object.keys(creep.store) as ResourceConstant[];
-      const primaryResource = carriedResources[0] || RESOURCE_ENERGY;
+      // 1. 优先运输到 Spawn 和 Extension
+      const energyStructures = creep.room.find(FIND_STRUCTURES, {
+        filter: (structure) => {
+          return (structure.structureType === STRUCTURE_SPAWN ||
+                  structure.structureType === STRUCTURE_EXTENSION) &&
+                 structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0;
+        }
+      });
 
-      if (primaryResource === RESOURCE_ENERGY) {
-        // 能量的分发优先级
-        target = this.findEnergyTarget(creep);
-      } else {
-        // 其他资源的存储
-        target = this.findStorageTarget(creep, primaryResource);
+      if (energyStructures.length > 0) {
+        target = creep.pos.findClosestByPath(energyStructures);
+      }
+
+      // 2. 运输到容器
+      if (!target) {
+        const containers = creep.room.find(FIND_STRUCTURES, {
+          filter: (structure) => {
+            return (structure.structureType === STRUCTURE_CONTAINER ||
+                    structure.structureType === STRUCTURE_STORAGE) &&
+                   structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0;
+          }
+        });
+
+        if (containers.length > 0) {
+          target = creep.pos.findClosestByPath(containers);
+        }
+      }
+
+      // 3. 运输到建筑工地
+      if (!target) {
+        const constructionSites = creep.room.find(FIND_CONSTRUCTION_SITES);
+        if (constructionSites.length > 0) {
+          target = creep.pos.findClosestByPath(constructionSites);
+        }
+      }
+
+      // 4. 运输到控制器
+      if (!target && creep.room.controller) {
+        target = creep.room.controller;
       }
 
       // 执行运输
       if (target) {
-        const result = creep.transfer(target, primaryResource);
+        let result: number;
+
+        if (target instanceof ConstructionSite) {
+          result = creep.build(target);
+        } else if (target instanceof StructureController) {
+          result = creep.upgradeController(target);
+        } else {
+          result = creep.transfer(target, RESOURCE_ENERGY);
+        }
 
         if (result === ERR_NOT_IN_RANGE) {
           creep.moveTo(target, {
             visualizePathStyle: { stroke: '#ffffff' }
           });
         } else if (result === OK) {
-          creep.say('📤');
+          creep.say('🚚');
         }
       } else {
-        // 如果没有目标，就在控制器附近等待
-        if (creep.room.controller) {
-          creep.moveTo(creep.room.controller);
+        // 如果没有运输目标，尝试帮助静态矿工移动
+        if (this.shouldHelpStaticHarvester(creep)) {
+          this.helpStaticHarvester(creep);
+        } else {
+          creep.say('等待任务');
+          // 原地等待，不移动到控制器
         }
       }
-    }
-
-    private static findEnergyTarget(creep: Creep): Structure | null {
-      // 能量分发优先级：Spawn > Extension > Tower > Container/Storage
-
-      // 1. Spawn（生产单位）
-      const spawns = creep.room.find(FIND_STRUCTURES, {
-        filter: (structure) => {
-          return structure.structureType === STRUCTURE_SPAWN &&
-                 structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0;
-        }
-      });
-
-      if (spawns.length > 0) {
-        return creep.pos.findClosestByPath(spawns);
-      }
-
-      // 2. Extension（扩展）
-      const extensions = creep.room.find(FIND_STRUCTURES, {
-        filter: (structure) => {
-          return structure.structureType === STRUCTURE_EXTENSION &&
-                 structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0;
-        }
-      });
-
-      if (extensions.length > 0) {
-        return creep.pos.findClosestByPath(extensions);
-      }
-
-      // 3. Tower（防御塔）
-      const towers = creep.room.find(FIND_STRUCTURES, {
-        filter: (structure) => {
-          return structure.structureType === STRUCTURE_TOWER &&
-                 structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0;
-        }
-      });
-
-      if (towers.length > 0) {
-        return creep.pos.findClosestByPath(towers);
-      }
-
-      // 4. Container 或 Storage
-      const storage = creep.room.find(FIND_STRUCTURES, {
-        filter: (structure) => {
-          return (structure.structureType === STRUCTURE_CONTAINER ||
-                  structure.structureType === STRUCTURE_STORAGE) &&
-                 structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0;
-        }
-      });
-
-      if (storage.length > 0) {
-        return creep.pos.findClosestByPath(storage);
-      }
-
-      return null;
-    }
-
-    private static findStorageTarget(creep: Creep, resourceType: ResourceConstant): Structure | null {
-      // 寻找可以存储指定类型资源的建筑
-      const storage = creep.room.find(FIND_STRUCTURES, {
-        filter: (structure) => {
-          return (structure.structureType === STRUCTURE_CONTAINER ||
-                  structure.structureType === STRUCTURE_STORAGE ||
-                  structure.structureType === STRUCTURE_TERMINAL) &&
-                 structure.store.getFreeCapacity(resourceType) > 0;
-        }
-      });
-
-      if (storage.length > 0) {
-        return creep.pos.findClosestByPath(storage);
-      }
-
-      return null;
     }
   }

@@ -132,57 +132,55 @@ export class RoleBuilder {
     }
 
     private static getEnergy(creep: Creep): void {
-      let target: Structure | Resource | Source | null = null;
+      let target: Structure | null = null;
 
-      // 1. 从容器获取
-      const containers = creep.room.find(FIND_STRUCTURES, {
+      // 1. 优先从 Spawn 和 Extension 获取能量（主城资源）
+      const energyStructures = creep.room.find(FIND_STRUCTURES, {
         filter: (structure) => {
-          return (structure.structureType === STRUCTURE_CONTAINER ||
-                  structure.structureType === STRUCTURE_STORAGE) &&
-                 structure.store.getUsedCapacity(RESOURCE_ENERGY) > 0;
+          return (structure.structureType === STRUCTURE_SPAWN ||
+                  structure.structureType === STRUCTURE_EXTENSION) &&
+                 structure.store.getUsedCapacity(RESOURCE_ENERGY) > 100; // 保留一些给生产
         }
       });
 
-      if (containers.length > 0) {
-        target = creep.pos.findClosestByPath(containers);
-      }
-
-      // 2. 拾取掉落的资源
-      if (!target) {
-        const droppedEnergy = creep.room.find(FIND_DROPPED_RESOURCES, {
-          filter: (resource) => resource.resourceType === RESOURCE_ENERGY
-        });
-
-        if (droppedEnergy.length > 0) {
-          target = creep.pos.findClosestByPath(droppedEnergy);
+      if (energyStructures.length > 0) {
+        // 选择最近的 Spawn 或 Extension
+        target = creep.pos.findClosestByPath(energyStructures);
+        if (target) {
+          console.log(`🏗️ Builder ${creep.name} 从主城获取能量: ${target.structureType}`);
         }
       }
 
-      // 3. 从能量源采集
+      // 2. 从容器获取
       if (!target) {
-        const sources = creep.room.find(FIND_SOURCES);
-        if (sources.length > 0) {
-          target = creep.pos.findClosestByPath(sources);
+        const containers = creep.room.find(FIND_STRUCTURES, {
+          filter: (structure) => {
+            return (structure.structureType === STRUCTURE_CONTAINER ||
+                    structure.structureType === STRUCTURE_STORAGE) &&
+                   structure.store.getUsedCapacity(RESOURCE_ENERGY) > 0;
+          }
+        });
+
+        if (containers.length > 0) {
+          target = creep.pos.findClosestByPath(containers);
+          console.log(`📦 Builder ${creep.name} 从容器获取能量`);
         }
       }
 
       // 执行获取能量
       if (target) {
-        let result: number;
-
-        if (target instanceof Resource) {
-          result = creep.pickup(target);
-        } else if (target instanceof Source) {
-          result = creep.harvest(target);
-        } else {
-          result = creep.withdraw(target, RESOURCE_ENERGY);
-        }
+        const result = creep.withdraw(target, RESOURCE_ENERGY);
 
         if (result === ERR_NOT_IN_RANGE) {
           creep.moveTo(target, {
             visualizePathStyle: { stroke: '#ffaa00' }
           });
+        } else if (result === OK) {
+          creep.say('⚡');
         }
+      } else {
+        // 没有资源可获取，等待主城有资源
+        creep.say('等待资源');
       }
     }
   }
