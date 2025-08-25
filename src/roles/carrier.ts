@@ -30,16 +30,24 @@ export class RoleCarrier {
 
     // 检查是否需要帮助静态矿工移动
     private static shouldHelpStaticHarvester(creep: Creep): boolean {
-      // 不管有没有携带资源，都可以帮忙移动
+      // 检查是否已经有其他运输工在帮助移动
+      const helpingCarriers = creep.room.find(FIND_MY_CREEPS, {
+        filter: (c) => c.memory.role === 'carrier' &&
+                       c.id !== creep.id &&
+                       c.memory.helpingStaticHarvester // 检查其他运输工是否在帮助
+      });
+
+      // 如果已经有运输工在帮助移动，这个运输工就不需要帮忙了
+      if (helpingCarriers.length > 0) {
+        return false;
+      }
+
+      // 检查是否有需要帮助的静态矿工（working !== true）
       const staticHarvesters = creep.room.find(FIND_MY_CREEPS, {
         filter: (c) => c.memory.role === 'staticHarvester' &&
                        c.memory.targetId &&
                        c.getActiveBodyparts(MOVE) == 0 && // 只帮助没有 MOVE 部件的静态矿工
-                       c.pos.getRangeTo(new RoomPosition(
-                         parseInt(c.memory.targetId.split(',')[0]),
-                         parseInt(c.memory.targetId.split(',')[1]),
-                         c.room.name
-                       )) > 1 // 距离目标位置>1格时才需要帮助
+                       c.memory.working !== true // 检查working状态
       });
 
       return staticHarvesters.length > 0;
@@ -47,79 +55,120 @@ export class RoleCarrier {
 
     // 帮助静态矿工移动到指定位置
     private static helpStaticHarvester(creep: Creep): void {
+      // 如果已经有帮助的矿工，继续帮助同一个
+      if (creep.memory.helpingStaticHarvester) {
+        const target = Game.creeps[creep.memory.helpingStaticHarvester];
+        if (target && target.memory.role === 'staticHarvester') {
+          // 检查矿工是否已经到达目标位置
+          if (target.memory.working === true) {
+            // 矿工已经到达，清除帮助状态，寻找下一个
+            delete creep.memory.helpingStaticHarvester;
+            return;
+          }
+          // 继续帮助这个矿工
+          this.assistStaticHarvester(creep, target);
+          return;
+        }
+      }
+
+      // 寻找新的需要帮助的矿工
       const target = creep.pos.findClosestByRange(FIND_MY_CREEPS, {
         filter: function(object) {
           return object.memory.role === 'staticHarvester' &&
                  object.memory.targetId &&
                  object.getActiveBodyparts(MOVE) === 0 &&
-                 object.pos.getRangeTo(new RoomPosition(
-                   parseInt(object.memory.targetId!.split(',')[0]),
-                   parseInt(object.memory.targetId!.split(',')[1]),
-                   object.room.name
-                 )) > 1; // 距离目标位置>1格时才需要帮助
+                 object.memory.working !== true;
         }
       });
 
       if (target) {
+        // 记录要帮助的矿工名字
+        creep.memory.helpingStaticHarvester = target.name;
         creep.say('🚶 帮助移动');
+        this.assistStaticHarvester(creep, target);
+      }
+    }
 
-        const targetPos = new RoomPosition(
-          parseInt(target.memory.targetId!.split(',')[0]),
-          parseInt(target.memory.targetId!.split(',')[1]),
-          target.room.name
-        );
+    // 协助静态矿工移动
+    private static assistStaticHarvester(creep: Creep, target: Creep): void {
+      const targetPos = new RoomPosition(
+        parseInt(target.memory.targetId!.split(',')[0]),
+        parseInt(target.memory.targetId!.split(',')[1]),
+        target.room.name
+      );
 
-        // 检查目标位置是否已经被其他 creep 占用
-        const creepsAtTarget = targetPos.lookFor(LOOK_CREEPS);
-        const isTargetOccupied = creepsAtTarget.some(c => c.id !== target.id);
+      // 检查运输兵是否已经到达矿点附近（isNearTo）
+      if (creep.pos.isNearTo(targetPos)) {
+        // 已经到达矿点附近，执行交换位置
+        creep.say('🔄 交换位置');
+        console.log(`运输兵 ${creep.name} 到达矿点附近，执行交换位置`);
 
-        if (isTargetOccupied) {
-          // 目标位置被占用，寻找新的可用位置
-          const newTargetPos = this.findAlternativeMiningSpot(target, targetPos);
-          if (newTargetPos) {
-            // 更新静态矿工的目标位置
-            target.memory.targetId = `${newTargetPos.x},${newTargetPos.y}`;
-            console.log(`静态矿工 ${target.name} 目标位置被占用，重新分配到: ${newTargetPos.x},${newTargetPos.y}`);
-            return;
-          } else {
-            // 没有可用位置，等待
-            creep.say('⏳ 等待位置');
-            return;
-          }
-        }
-
-        // 如果静态矿工已经距离目标位置≤1格，不需要帮助
-        if (target.pos.getRangeTo(targetPos) <= 1) {
-          return;
-        }
-
+        // 执行真正的交换位置
         const pullResult = creep.pull(target);
+        console.log(`运输兵 ${creep.name} 交换位置时pull结果: ${pullResult}`);
 
-        if (pullResult == ERR_NOT_IN_RANGE) {
-          creep.moveTo(target, { visualizePathStyle: { stroke: '#00ff00' } });
-        } else if (pullResult == OK) {
-          const targetMoveResult = target.move(creep);
+        if (pullResult == OK) {
+          console.log(`运输兵 ${creep.name} pull成功，开始交换位置`);
 
-          if (creep.pos.isEqualTo(targetPos)) {
-            const freePosition = this.findFreePositionNearTarget(targetPos);
-            if (freePosition) {
-              creep.moveTo(freePosition, { visualizePathStyle: { stroke: '#ff0000' } });
-            }
+          // 记录矿工的原位置
+          const targetOriginalPos = target.pos;
+
+          // 让矿工移动到运输兵位置（目标位置）
+          const moveResult = target.move(creep);
+          console.log(`矿工 ${target.name} move结果: ${moveResult}`);
+
+          if (moveResult == OK) {
+            // 矿工成功移动，现在运输兵移动到矿工的原位置
+            console.log(`矿工 ${target.name} 移动到目标位置，运输兵移动到矿工原位置`);
+            creep.moveTo(targetOriginalPos, { visualizePathStyle: { stroke: '#ff0000' } });
+
+            // 等待一轮，让位置交换完成
+            creep.say('⏳ 交换中');
           } else {
-            if (creep.pos.isNearTo(targetPos)) {
-              const direction = target.pos.getDirectionTo(targetPos);
-
-              if (direction !== TOP) {
-                const targetMoveResult = target.move(direction);
-                const carrierMoveResult = creep.move(direction);
-              }
-            } else {
-              creep.moveTo(targetPos, {
-                visualizePathStyle: { stroke: '#ffffff' }
-              });
-            }
+            // 矿工移动失败，继续协助
+            creep.say('⚠️ 移动失败');
+            console.log(`矿工 ${target.name} 移动失败，结果: ${moveResult}，继续协助`);
           }
+        } else if (pullResult == ERR_NOT_IN_RANGE) {
+          console.log(`运输兵 ${creep.name} pull失败，不在范围内，移动到矿工附近`);
+          creep.moveTo(target, { visualizePathStyle: { stroke: '#00ff00' } });
+        } else {
+          console.log(`运输兵 ${creep.name} pull其他错误: ${pullResult}，移动到矿工附近`);
+          creep.moveTo(target, { visualizePathStyle: { stroke: '#00ff00' } });
         }
+        return;
+      }
+
+      // 还没到达矿点附近，走一步矿工跟一步
+      const distanceToTarget = creep.pos.getRangeTo(targetPos);
+      creep.say(`🚶 前往目标 距离: ${distanceToTarget}格`);
+      console.log(`运输兵 ${creep.name} 协助矿工 ${target.name}，距离目标: ${distanceToTarget}格，距离矿工: ${creep.pos.getRangeTo(target)}格`);
+
+      // 先移动到矿工附近
+      if (creep.pos.getRangeTo(target) > 1) {
+        console.log(`运输兵 ${creep.name} 距离矿工太远，移动到矿工附近`);
+        creep.moveTo(target, { visualizePathStyle: { stroke: '#00ff00' } });
+        return;
+      }
+
+      // 在矿工附近，执行pull和移动
+      console.log(`运输兵 ${creep.name} 在矿工附近，执行pull和移动`);
+      const pullResult = creep.pull(target);
+      console.log(`运输兵 ${creep.name} pull结果: ${pullResult}`);
+
+      if (pullResult == OK) {
+        target.move(creep);
+        // 运输兵向目标位置移动一步
+        console.log(`运输兵 ${creep.name} pull成功，矿工跟随，运输兵向目标移动`);
+        creep.moveTo(targetPos, { visualizePathStyle: { stroke: '#00ff00' } });
+      } else if (pullResult == ERR_NOT_IN_RANGE) {
+        // 不在范围内，移动到矿工附近
+        console.log(`运输兵 ${creep.name} pull失败，不在范围内，移动到矿工附近`);
+        creep.moveTo(target, { visualizePathStyle: { stroke: '#00ff00' } });
+      } else {
+        // 其他错误，也移动到矿工附近
+        console.log(`运输兵 ${creep.name} pull其他错误: ${pullResult}，移动到矿工附近`);
+        creep.moveTo(target, { visualizePathStyle: { stroke: '#00ff00' } });
       }
     }
 
@@ -141,7 +190,6 @@ export class RoleCarrier {
           // 检查位置是否被占用
           const creepsAtPos = testPos.lookFor(LOOK_CREEPS);
           const structuresAtPos = testPos.lookFor(LOOK_STRUCTURES);
-
           if (creepsAtPos.length === 0 && structuresAtPos.length === 0) {
             return testPos;
           }
@@ -369,5 +417,64 @@ export class RoleCarrier {
           // 原地等待，不移动到控制器
         }
       }
+    }
+
+    // 寻找可用的矿点
+    private static findAvailableMiningSpot(staticHarvester: Creep): RoomPosition | null {
+      // 获取房间内存中的采矿点信息
+      const roomMemory = Memory.rooms[staticHarvester.room.name];
+      if (!roomMemory || !roomMemory.miningSpots || roomMemory.miningSpots.length === 0) {
+        console.log(`房间 ${staticHarvester.room.name} 没有采矿点信息`);
+        return null;
+      }
+
+      // 遍历所有矿点，找到第一个有可用位置的矿点
+      for (const miningSpotStr of roomMemory.miningSpots) {
+        const [spotX, spotY] = miningSpotStr.split(',').map(Number);
+        const miningSpot = new RoomPosition(spotX, spotY, staticHarvester.room.name);
+
+        console.log(`检查矿点 ${spotX},${spotY} ±1范围内是否有空位`);
+
+        // 检查矿点±1范围内的所有位置
+        for (let x = spotX - 1; x <= spotX + 1; x++) {
+          for (let y = spotY - 1; y <= spotY + 1; y++) {
+            if (x >= 0 && x < 50 && y >= 0 && y < 50) {
+              const testPos = new RoomPosition(x, y, staticHarvester.room.name);
+
+              // 检查位置是否有建筑
+              const structuresAtPos = staticHarvester.room.lookForAt(LOOK_STRUCTURES, testPos);
+
+              // 检查位置的地形
+              const terrainAtPos = staticHarvester.room.lookForAt(LOOK_TERRAIN, testPos);
+              const isTerrainWall = terrainAtPos[0] === 'wall';
+
+              // 如果是地形墙，直接跳过
+              if (isTerrainWall) {
+                continue;
+              }
+
+              // 如果有建筑，跳过
+              if (structuresAtPos.length > 0) {
+                continue;
+              }
+
+              // 没有建筑且不是地形墙的情况下，检查是否有爬爬或建筑工地
+              const creepsAtPos = staticHarvester.room.lookForAt(LOOK_CREEPS, testPos);
+              const constructionSitesAtPos = staticHarvester.room.lookForAt(LOOK_CONSTRUCTION_SITES, testPos);
+
+              if (creepsAtPos.length === 0 &&
+                  constructionSitesAtPos.length === 0) {
+                console.log(`矿点 ${spotX},${spotY} ±1范围内找到可用位置: ${testPos.x},${testPos.y}`);
+                return testPos;
+              }
+            }
+          }
+        }
+
+        console.log(`矿点 ${spotX},${spotY} ±1范围内没有可用位置`);
+      }
+
+      console.log(`所有矿点都没有可用位置`);
+      return null;
     }
   }

@@ -18,6 +18,7 @@ declare global {
     builders: number;
     carriers: number;
     miningSpots: string[]; // 新增：记录可用的采矿点
+    totalAvailableSpots: number; // 新增：记录总可用空地数量
   }
 
   interface CreepMemory {
@@ -27,6 +28,7 @@ declare global {
     sourceIndex?: number;  // 指定采集的资源点
     targetId?: string;     // 目标ID
     lastPos?: { x: number, y: number }; // 记录上一次位置，用于道路规划
+    helpingStaticHarvester?: string; // 要帮助的静态矿工的名字
   }
 }
 
@@ -38,12 +40,20 @@ const ROLE_LIMITS = {
   carrier: 2           // 运输者（增加数量以支持静态矿工）
 };
 
-// 生产新 Creep 的身体部件配置
-const BODY_PARTS = {
-  staticHarvester: [WORK, WORK, WORK], // 静态矿工只需要工作部件
-  upgrader: [WORK, CARRY, MOVE, MOVE],
-  builder: [WORK, CARRY, MOVE, MOVE],
-  carrier: [CARRY, CARRY, MOVE, MOVE]
+// 生产新 Creep 的身体部件配置（基础配置）
+const BASE_BODY_PARTS = {
+  staticHarvester: [WORK, WORK, WORK], // 静态矿工：3个WORK部件
+  upgrader: [WORK, CARRY, CARRY, MOVE, MOVE], // 升级工：1个WORK，2个CARRY，2个MOVE
+  builder: [WORK, CARRY, CARRY, MOVE, MOVE],  // 建筑工：1个WORK，2个CARRY，2个MOVE
+  carrier: [CARRY, CARRY, CARRY, CARRY, MOVE, MOVE] // 运输兵：4个CARRY，2个MOVE
+};
+
+// 身体部件扩展配置（用于自动扩展）
+const BODY_EXTENSIONS = {
+  staticHarvester: [WORK, WORK, WORK], // 每次扩展增加3个WORK
+  upgrader: [WORK, CARRY, CARRY, MOVE, MOVE], // 每次扩展增加1个WORK，2个CARRY，2个MOVE
+  builder: [WORK, CARRY, CARRY, MOVE, MOVE],  // 每次扩展增加1个WORK，2个CARRY，2个MOVE
+  carrier: [CARRY, CARRY, CARRY, CARRY, MOVE, MOVE] // 每次扩展增加4个CARRY，2个MOVE
 };
 
 export const loop = ErrorMapper.wrapLoop(() => {
@@ -79,6 +89,8 @@ export const loop = ErrorMapper.wrapLoop(() => {
 
     console.log(`处理我的房间: ${roomName}`);
 
+
+
     // 初始化房间内存
     if (!Memory.rooms[roomName]) {
       Memory.rooms[roomName] = {
@@ -86,7 +98,8 @@ export const loop = ErrorMapper.wrapLoop(() => {
         upgraders: 0,
         builders: 0,
         carriers: 0,
-        miningSpots: [] // 新增：记录可用的采矿点
+        miningSpots: [], // 新增：记录可用的采矿点
+        totalAvailableSpots: 0 // 新增：记录总可用空地数量
       };
       console.log(`初始化房间 ${roomName} 的内存`);
     }
@@ -115,21 +128,35 @@ export const loop = ErrorMapper.wrapLoop(() => {
 function updateMiningSpots(room: Room): void {
   const sources = room.find(FIND_SOURCES);
   const miningSpots: string[] = [];
+  let totalAvailableSpots = 0;
 
-  // 为每个资源点找到最近的可用位置
+  // 为每个资源点找到所有可用的位置（8格范围内）
   for (const source of sources) {
-    // 寻找资源点周围2格内的可用位置
     const positions = [];
-    for (let x = source.pos.x - 2; x <= source.pos.x + 2; x++) {
-      for (let y = source.pos.y - 2; y <= source.pos.y + 2; y++) {
+
+    // 寻找资源点周围8格内的所有可用位置
+    for (let x = source.pos.x - 8; x <= source.pos.x + 8; x++) {
+      for (let y = source.pos.y - 8; y <= source.pos.y + 8; y++) {
         if (x >= 0 && x < 50 && y >= 0 && y < 50) {
           const pos = new RoomPosition(x, y, room.name);
-          if (pos.isNearTo(source) && !pos.isNearTo(room.controller!)) {
+
+          // 检查位置是否在8格范围内且不是墙
+          if (pos.getRangeTo(source) <= 8) {
             // 检查位置是否被占用
             const creepsAtPos = room.lookForAt(LOOK_CREEPS, pos);
             const structuresAtPos = room.lookForAt(LOOK_STRUCTURES, pos);
+            const constructionSitesAtPos = room.lookForAt(LOOK_CONSTRUCTION_SITES, pos);
 
-            if (creepsAtPos.length === 0 && structuresAtPos.length === 0) {
+            // 检查是否是墙
+            const isWall = structuresAtPos.some(s =>
+              s.structureType === STRUCTURE_WALL ||
+              s.structureType === STRUCTURE_RAMPART
+            );
+
+            if (creepsAtPos.length === 0 &&
+                structuresAtPos.length === 0 &&
+                constructionSitesAtPos.length === 0 &&
+                !isWall) {
               positions.push(pos);
             }
           }
@@ -137,8 +164,11 @@ function updateMiningSpots(room: Room): void {
       }
     }
 
+    // 计算这个矿点的可用位置数量
+    totalAvailableSpots += positions.length;
+
     if (positions.length > 0) {
-      // 选择最近的可用位置
+      // 选择最近的可用位置作为主要采矿点
       const bestPos = positions.reduce((best, current) => {
         return current.getRangeTo(source) < best.getRangeTo(source) ? current : best;
       });
@@ -146,7 +176,9 @@ function updateMiningSpots(room: Room): void {
     }
   }
 
+  // 存储采矿点信息和总可用空地数量
   Memory.rooms[room.name].miningSpots = miningSpots;
+  Memory.rooms[room.name].totalAvailableSpots = totalAvailableSpots;
 }
 
 // 更新房间的建筑布局建议
@@ -455,26 +487,27 @@ function spawnCreeps(room: Room, creepCounts: any, hasBasic: boolean): void {
 
   // 动态调整静态矿工数量限制
   const miningSpots = Memory.rooms[room.name].miningSpots;
+  const totalAvailableSpots = Memory.rooms[room.name].totalAvailableSpots || 0;
+
   const dynamicRoleLimits = {
     ...ROLE_LIMITS,
-    staticHarvester: Math.max(0, miningSpots.length) // 根据采矿点数量调整静态矿工数量
+    staticHarvester: Math.max(0, totalAvailableSpots) // 根据总可用空地数量调整静态矿工数量
   };
 
   // 根据基础兵种状态调整生产策略
   let priorities: string[];
   if (!hasBasic) {
     // 还没有建立基础兵种，优先生产缺失的
-    priorities = getSpawnPriorities(room, creepCounts, roomEnergy);
+    priorities = getSpawnPriorities(room, creepCounts);
   } else {
-    // 已建立基础兵种，建筑者和升级工可以开始工作
-    // 优先生产更多运输兵和矿工，然后是建筑者和升级工
-    priorities = ['carrier',  'staticHarvester', 'upgrader', 'builder'];
+    // 已建立基础兵种，优先补满矿工，然后是其他工种
+    priorities = getAdvancedSpawnPriorities(room, creepCounts, roomEnergy, totalAvailableSpots);
   }
 
   for (const role of priorities) {
     if (creepCounts[role] < dynamicRoleLimits[role as keyof typeof dynamicRoleLimits]) {
       // 根据可用能量选择身体部件
-      const bodyParts = getOptimalBodyParts(role, roomEnergy);
+      const bodyParts = getOptimalBodyParts(role, roomEnergy, creepCounts);
 
       if (bodyParts.length === 0) {
         continue;
@@ -506,50 +539,55 @@ function spawnCreeps(room: Room, creepCounts: any, hasBasic: boolean): void {
   }
 }
 
-// 根据房间状态动态调整生产优先级
-function getSpawnPriorities(room: Room, creepCounts: any, roomEnergy: number): string[] {
-  // 基础优先级：先保证每个兵种都有一个
-  const basePriorities = ['carrier', 'staticHarvester', 'upgrader', 'builder'];
+// 获取基础工种优先级（确保每个工种至少有一个）
+function getSpawnPriorities(room: Room, creepCounts: any): string[] {
+  const priorities: string[] = [];
 
-  // 检查哪些兵种还没有
-  const missingRoles: string[] = [];
-  for (const role of basePriorities) {
-    if (creepCounts[role] === 0) {
-      missingRoles.push(role);
-    }
-  }
-
-  // 如果有缺失的兵种，优先生产缺失的
-  if (missingRoles.length > 0) {
-    return missingRoles;
-  }
-
-  // 如果所有兵种都有至少一个，按优先级继续生产
-  const normalPriorities = ['carrier', 'staticHarvester', 'upgrader', 'builder'];
-
-  // 如果没有运输者，优先生产
+  // 搬运工优先级最高，确保至少有一个
   if (creepCounts.carrier === 0) {
-    return ['carrier', 'staticHarvester', 'upgrader', 'builder'];
+    priorities.push('carrier');
   }
 
-  // 如果有采矿点且缺少静态矿工，优先生产
-  const miningSpots = Memory.rooms[room.name].miningSpots;
-  if (miningSpots.length > 0 && creepCounts.staticHarvester < miningSpots.length - 1) {
-    return ['staticHarvester', 'carrier', 'upgrader', 'builder'];
+  // 然后确保其他基础工种至少有一个
+  if (creepCounts.staticHarvester === 0) {
+    priorities.push('staticHarvester');
   }
 
-  // 如果控制器等级较低，优先升级
-  if (room.controller && room.controller.level < 3) {
-    return ['upgrader', 'staticHarvester', 'carrier', 'builder'];
+  if (creepCounts.upgrader === 0) {
+    priorities.push('upgrader');
   }
 
-  // 如果有建筑任务，优先建造者
-  const constructionSites = room.find(FIND_CONSTRUCTION_SITES);
-  if (constructionSites.length > 0) {
-    return ['builder', 'staticHarvester', 'carrier', 'upgrader'];
+  if (creepCounts.builder === 0) {
+    priorities.push('builder');
   }
 
-  return normalPriorities;
+  return priorities;
+}
+
+// 获取高级工种优先级（在基础工种齐全后的扩展）
+function getAdvancedSpawnPriorities(room: Room, creepCounts: any, roomEnergy: number, totalAvailableSpots: number): string[] {
+  const priorities: string[] = [];
+
+  // 搬运工优先级最高，确保有足够的搬运工
+  if (creepCounts.carrier < 2) {
+    priorities.push('carrier');
+  }
+
+  // 然后优先补满静态矿工
+  if (totalAvailableSpots > 0 && creepCounts.staticHarvester < totalAvailableSpots) {
+    priorities.push('staticHarvester');
+  }
+
+  // 最后是其他工种
+  if (creepCounts.upgrader < 2) {
+    priorities.push('upgrader');
+  }
+
+  if (creepCounts.builder < 2) {
+    priorities.push('builder');
+  }
+
+  return priorities;
 }
 
 // 检查房间是否已经建立了基础兵种
@@ -560,43 +598,59 @@ function hasBasicCreeps(creepCounts: any): boolean {
          creepCounts.builder > 0;
 }
 
-// 根据可用能量获取最优身体部件
-function getOptimalBodyParts(role: string, availableEnergy: number): BodyPartConstant[] {
-  const baseConfigs = {
-    staticHarvester: [
-      [WORK],                                 // 100 能量
-      [WORK, WORK],                           // 200 能量
-      [WORK, WORK, WORK]                      // 300 能量
-    ],
-    upgrader: [
-      [WORK, CARRY, MOVE],                    // 300 能量
-      [WORK, WORK, CARRY, MOVE, MOVE],       // 450 能量
-      [WORK, WORK, WORK, CARRY, MOVE, MOVE]  // 550 能量
-    ],
-    builder: [
-      [WORK, CARRY, MOVE],                    // 300 能量
-      [WORK, WORK, CARRY, MOVE, MOVE],       // 450 能量
-      [WORK, WORK, CARRY, CARRY, MOVE, MOVE] // 500 能量
-    ],
-    carrier: [
-      [CARRY, CARRY, MOVE],                   // 150 能量
-      [CARRY, CARRY, CARRY, CARRY, MOVE],    // 250 能量
-      [CARRY, CARRY, CARRY, CARRY, MOVE, MOVE] // 300 能量
-    ]
-  };
+// 根据可用能量和工种数量获取最优身体部件
+function getOptimalBodyParts(role: string, availableEnergy: number, creepCounts: any): BodyPartConstant[] {
+  // 基础配置
+  const baseParts = BASE_BODY_PARTS[role as keyof typeof BASE_BODY_PARTS];
+  if (!baseParts) return [];
 
-  const configs = baseConfigs[role as keyof typeof baseConfigs];
-  if (!configs) return [];
+  // 计算基础配置的能量消耗
+  const baseCost = getBodyCost(baseParts);
 
-  // 选择能量消耗不超过可用能量的最大配置
-  for (let i = configs.length - 1; i >= 0; i--) {
-    const cost = getBodyCost(configs[i]);
-    if (cost <= availableEnergy) {
-      return configs[i];
+  // 如果基础配置都买不起，返回空数组
+  if (baseCost > availableEnergy) {
+    return [];
+  }
+
+  // 检查每个工种的数量，决定是否需要扩展
+  let extensionLevel = 0;
+
+  // 如果每个工种都大于1，开始扩展
+  if (creepCounts.carrier > 1 &&
+      creepCounts.staticHarvester > 1 &&
+      creepCounts.upgrader > 1 &&
+      creepCounts.builder > 1) {
+
+    // 计算可以扩展几次
+    const extensionParts = BODY_EXTENSIONS[role as keyof typeof BODY_EXTENSIONS];
+    if (extensionParts) {
+      const extensionCost = getBodyCost(extensionParts);
+
+      // 计算可以扩展的次数
+      const maxExtensions = Math.floor((availableEnergy - baseCost) / extensionCost);
+      extensionLevel = Math.min(maxExtensions, 2); // 最多扩展2次，避免过度复杂
     }
   }
 
-  return [];
+  // 构建最终的身体部件配置
+  let finalParts = [...baseParts];
+
+  // 添加扩展部件
+  const extensionParts = BODY_EXTENSIONS[role as keyof typeof BODY_EXTENSIONS];
+  if (extensionParts && extensionLevel > 0) {
+    for (let i = 0; i < extensionLevel; i++) {
+      finalParts = finalParts.concat(extensionParts);
+    }
+  }
+
+  // 验证最终配置是否在能量范围内
+  const finalCost = getBodyCost(finalParts);
+  if (finalCost <= availableEnergy) {
+    return finalParts;
+  } else {
+    // 如果超出能量范围，回退到基础配置
+    return baseParts;
+  }
 }
 
 // 计算身体部件的能量消耗
