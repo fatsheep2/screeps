@@ -400,30 +400,34 @@ function manageRoom(room: Room): void {
   }
 }
 
-// 管理静态矿工的放置
+// 管理静态矿工
 function manageStaticHarvesters(room: Room): void {
   const staticHarvesters = room.find(FIND_MY_CREEPS, {
     filter: creep => creep.memory.role === 'staticHarvester'
   });
 
+  // 获取所有采矿点
+  const miningSpots = Memory.rooms[room.name].miningSpots;
+
   // 为每个静态矿工分配采矿点
   for (const harvester of staticHarvesters) {
     if (!harvester.memory.targetId) {
-      // 寻找最近的空闲采矿点
-      const miningSpots = Memory.rooms[room.name].miningSpots;
+      // 寻找可用的采矿点（没有被其他 creep 占用的）
       let bestSpot: string | null = null;
-      let minDistance = Infinity;
+      let bestDistance = Infinity;
 
       for (const spot of miningSpots) {
         const [x, y] = spot.split(',').map(Number);
         const spotPos = new RoomPosition(x, y, room.name);
-        const distance = harvester.pos.getRangeTo(spotPos);
 
-        if (distance < minDistance) {
-          // 检查这个点是否被占用
-          const creepsAtSpot = room.lookForAt(LOOK_CREEPS, spotPos);
-          if (creepsAtSpot.length === 0) {
-            minDistance = distance;
+        // 检查这个位置是否已经被其他 creep 占用
+        const creepsAtSpot = room.lookForAt(LOOK_CREEPS, spotPos);
+        const isOccupied = creepsAtSpot.some(c => c.id !== harvester.id);
+
+        if (!isOccupied) {
+          const distance = harvester.pos.getRangeTo(spotPos);
+          if (distance < bestDistance) {
+            bestDistance = distance;
             bestSpot = spot;
           }
         }
@@ -431,6 +435,7 @@ function manageStaticHarvesters(room: Room): void {
 
       if (bestSpot) {
         harvester.memory.targetId = bestSpot;
+        console.log(`静态矿工 ${harvester.name} 分配到采矿点: ${bestSpot}`);
       }
     }
   }

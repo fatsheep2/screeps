@@ -35,11 +35,11 @@ export class RoleCarrier {
         filter: (c) => c.memory.role === 'staticHarvester' &&
                        c.memory.targetId &&
                        c.getActiveBodyparts(MOVE) == 0 && // 只帮助没有 MOVE 部件的静态矿工
-                       !c.pos.isNearTo(new RoomPosition(
+                       c.pos.getRangeTo(new RoomPosition(
                          parseInt(c.memory.targetId.split(',')[0]),
                          parseInt(c.memory.targetId.split(',')[1]),
                          c.room.name
-                       ))
+                       )) > 1 // 距离目标位置>1格时才需要帮助
       });
 
       return staticHarvesters.length > 0;
@@ -52,11 +52,11 @@ export class RoleCarrier {
           return object.memory.role === 'staticHarvester' &&
                  object.memory.targetId &&
                  object.getActiveBodyparts(MOVE) === 0 &&
-                 !object.pos.isEqualTo(new RoomPosition(
+                 object.pos.getRangeTo(new RoomPosition(
                    parseInt(object.memory.targetId!.split(',')[0]),
                    parseInt(object.memory.targetId!.split(',')[1]),
                    object.room.name
-                 ));
+                 )) > 1; // 距离目标位置>1格时才需要帮助
         }
       });
 
@@ -69,6 +69,26 @@ export class RoleCarrier {
           target.room.name
         );
 
+        // 检查目标位置是否已经被其他 creep 占用
+        const creepsAtTarget = targetPos.lookFor(LOOK_CREEPS);
+        const isTargetOccupied = creepsAtTarget.some(c => c.id !== target.id);
+
+        if (isTargetOccupied) {
+          // 目标位置被占用，寻找新的可用位置
+          const newTargetPos = this.findAlternativeMiningSpot(target, targetPos);
+          if (newTargetPos) {
+            // 更新静态矿工的目标位置
+            target.memory.targetId = `${newTargetPos.x},${newTargetPos.y}`;
+            console.log(`静态矿工 ${target.name} 目标位置被占用，重新分配到: ${newTargetPos.x},${newTargetPos.y}`);
+            return;
+          } else {
+            // 没有可用位置，等待
+            creep.say('⏳ 等待位置');
+            return;
+          }
+        }
+
+        // 如果静态矿工已经距离目标位置≤1格，不需要帮助
         if (target.pos.getRangeTo(targetPos) <= 1) {
           return;
         }
@@ -124,6 +144,39 @@ export class RoleCarrier {
 
           if (creepsAtPos.length === 0 && structuresAtPos.length === 0) {
             return testPos;
+          }
+        }
+      }
+
+      return null;
+    }
+
+    // 寻找替代的采矿点
+    private static findAlternativeMiningSpot(staticHarvester: Creep, originalPos: RoomPosition): RoomPosition | null {
+      const sources = staticHarvester.room.find(FIND_SOURCES);
+      if (sources.length === 0) return null;
+
+      // 寻找距离矿点最近的可用位置
+      for (const source of sources) {
+        // 在矿点周围 2 格范围内寻找位置
+        for (let x = source.pos.x - 2; x <= source.pos.x + 2; x++) {
+          for (let y = source.pos.y - 2; y <= source.pos.y + 2; y++) {
+            if (x >= 0 && x < 50 && y >= 0 && y < 50) {
+              const pos = new RoomPosition(x, y, staticHarvester.room.name);
+
+              // 检查位置是否合适
+              if (pos.isNearTo(source) && !pos.isEqualTo(source.pos)) {
+                const creepsAtPos = pos.lookFor(LOOK_CREEPS);
+                const structuresAtPos = pos.lookFor(LOOK_STRUCTURES);
+                const constructionSitesAtPos = pos.lookFor(LOOK_CONSTRUCTION_SITES);
+
+                if (creepsAtPos.length === 0 &&
+                    structuresAtPos.length === 0 &&
+                    constructionSitesAtPos.length === 0) {
+                  return pos;
+                }
+              }
+            }
           }
         }
       }
