@@ -1,7 +1,6 @@
 import { ErrorMapper } from "utils/ErrorMapper";
-import { RoleHarvester } from "roles/harvester";
-import { RoleStaticHarvester } from "roles/staticHarvester";
 import { RoleUpgrader } from "roles/upgrader";
+import { RoleStaticHarvester } from "roles/staticHarvester";
 import { RoleBuilder } from "roles/builder";
 import { RoleCarrier } from "roles/carrier";
 
@@ -14,7 +13,6 @@ declare global {
   }
 
   interface RoomMemory {
-    harvesters: number;
     staticHarvesters: number;
     upgraders: number;
     builders: number;
@@ -34,7 +32,6 @@ declare global {
 
 // 各角色需要的数量配置
 const ROLE_LIMITS = {
-  harvester: 1,        // 移动矿工（保证至少一个）
   staticHarvester: 0,  // 静态矿工（根据采矿点数量动态调整）
   upgrader: 2,         // 升级者
   builder: 2,          // 建造者
@@ -43,7 +40,6 @@ const ROLE_LIMITS = {
 
 // 生产新 Creep 的身体部件配置
 const BODY_PARTS = {
-  harvester: [WORK, CARRY, MOVE],
   staticHarvester: [WORK, WORK, WORK], // 静态矿工只需要工作部件
   upgrader: [WORK, CARRY, MOVE, MOVE],
   builder: [WORK, CARRY, MOVE, MOVE],
@@ -86,7 +82,6 @@ export const loop = ErrorMapper.wrapLoop(() => {
     // 初始化房间内存
     if (!Memory.rooms[roomName]) {
       Memory.rooms[roomName] = {
-        harvesters: 0,
         staticHarvesters: 0,
         upgraders: 0,
         builders: 0,
@@ -164,82 +159,100 @@ function updateBuildingLayout(room: Room): void {
     filter: (structure) => structure.structureType === STRUCTURE_CONTAINER
   });
 
-  // 如果能量充足，优先扩展
-  if (room.energyAvailable > 500 && extensions.length < 2) {
-    const bestPos = findBestExtensionPosition(room);
-    if (bestPos) {
-      room.createConstructionSite(bestPos, STRUCTURE_EXTENSION);
-    }
-  }
-
-  // 如果能量充足，优先容器
-  if (room.energyAvailable > 500 && containers.length < 2) {
+  // 优先建造 Container（放在矿点周围，帮助收集资源）
+  if (containers.length < sources.length) {
     const bestPos = findBestContainerPosition(room);
     if (bestPos) {
-      room.createConstructionSite(bestPos, STRUCTURE_CONTAINER);
+      room.createConstructionSite(bestPos.x, bestPos.y, STRUCTURE_CONTAINER);
+    }
+  }
+
+  // 然后建造 Extension（贴着主城斜向扩展）
+  if (extensions.length < 5) { // 限制 Extension 数量，避免过度拥挤
+    const bestPos = findBestExtensionPosition(room);
+    if (bestPos) {
+      room.createConstructionSite(bestPos.x, bestPos.y, STRUCTURE_EXTENSION);
     }
   }
 }
 
-// 寻找扩展的最佳位置
+// 寻找扩展的最佳位置（贴着主城斜向扩展）
 function findBestExtensionPosition(room: Room): RoomPosition | null {
-  const sources = room.find(FIND_SOURCES);
-  if (sources.length === 0) return null;
+  const spawns = room.find(FIND_MY_SPAWNS);
+  if (spawns.length === 0) return null;
 
-  let bestPos: RoomPosition | null = null;
-  let minDistance = Infinity;
+  const spawn = spawns[0]; // 使用第一个 spawn 作为参考点
 
-  for (const source of sources) {
-    const positions = [];
-    for (let x = source.pos.x - 2; x <= source.pos.x + 2; x++) {
-      for (let y = source.pos.y - 2; y <= source.pos.y + 2; y++) {
-        if (x >= 0 && x < 50 && y >= 0 && y < 50) {
-          const pos = new RoomPosition(x, y, room.name);
-          if (pos.isNearTo(source) && !pos.isNearTo(room.controller!)) {
-            const creepsAtPos = room.lookForAt(LOOK_CREEPS, pos);
-            const structuresAtPos = room.lookForAt(LOOK_STRUCTURES, pos);
-            if (creepsAtPos.length === 0 && structuresAtPos.length === 0) {
-              positions.push(pos);
-            }
-          }
-        }
-      }
-    }
+  // 定义棋盘式斜向扩展的偏移量（#代表主城，x代表extension）
+  // |---|----|----|----|----|
+  // |x| |x| |x|
+  // | |x| |x| |
+  // |x| |#| |x|
+  // | |x| |x| |
+  // |x| |x| |x|
+  const chessboardOffsets = [
+    // 第一层：紧贴 spawn 的 4 个对角位置
+    { x: -1, y: -1 }, { x: 1, y: -1 },
+    { x: -1, y: 1 },  { x: 1, y: 1 },
 
-    if (positions.length > 0) {
-      const closestPos = positions.reduce((best, current) => {
-        return current.getRangeTo(source) < best.getRangeTo(source) ? current : best;
-      });
+    // 第二层：向外扩展的 8 个位置
+    { x: -2, y: -2 }, { x: 0, y: -2 }, { x: 2, y: -2 },
+    { x: -2, y: 0 },                    { x: 2, y: 0 },
+    { x: -2, y: 2 },  { x: 0, y: 2 },  { x: 2, y: 2 },
 
-      const distance = closestPos.getRangeTo(source);
-      if (distance < minDistance) {
-        minDistance = distance;
-        bestPos = closestPos;
+    // 第三层：最外层的 4 个位置
+    { x: -3, y: -1 }, { x: 3, y: -1 },
+    { x: -3, y: 1 },  { x: 3, y: 1 }
+  ];
+
+  // 按照棋盘式布局顺序寻找可用位置
+  for (const offset of chessboardOffsets) {
+    const x = spawn.pos.x + offset.x;
+    const y = spawn.pos.y + offset.y;
+
+    if (x >= 0 && x < 50 && y >= 0 && y < 50) {
+      const pos = new RoomPosition(x, y, room.name);
+
+      // 检查位置是否可用
+      const creepsAtPos = room.lookForAt(LOOK_CREEPS, pos);
+      const structuresAtPos = room.lookForAt(LOOK_STRUCTURES, pos);
+      const constructionSitesAtPos = room.lookForAt(LOOK_CONSTRUCTION_SITES, pos);
+
+      if (creepsAtPos.length === 0 &&
+          structuresAtPos.length === 0 &&
+          constructionSitesAtPos.length === 0) {
+        return pos; // 返回第一个可用的位置，确保有序扩展
       }
     }
   }
 
-  return bestPos;
+  return null;
 }
 
-// 寻找容器的最佳位置
+// 寻找容器的最佳位置（放在矿点周围）
 function findBestContainerPosition(room: Room): RoomPosition | null {
   const sources = room.find(FIND_SOURCES);
   if (sources.length === 0) return null;
 
-  let bestPos: RoomPosition | null = null;
-  let minDistance = Infinity;
-
+  // 为每个矿点寻找最佳的 Container 位置
   for (const source of sources) {
-    const positions = [];
+    const positions: RoomPosition[] = [];
+
+    // 在矿点周围 2 格范围内寻找位置
     for (let x = source.pos.x - 2; x <= source.pos.x + 2; x++) {
       for (let y = source.pos.y - 2; y <= source.pos.y + 2; y++) {
         if (x >= 0 && x < 50 && y >= 0 && y < 50) {
           const pos = new RoomPosition(x, y, room.name);
-          if (pos.isNearTo(source) && !pos.isNearTo(room.controller!)) {
+
+          // 检查位置是否合适
+          if (pos.isNearTo(source) && !pos.isEqualTo(source.pos)) {
             const creepsAtPos = room.lookForAt(LOOK_CREEPS, pos);
             const structuresAtPos = room.lookForAt(LOOK_STRUCTURES, pos);
-            if (creepsAtPos.length === 0 && structuresAtPos.length === 0) {
+            const constructionSitesAtPos = room.lookForAt(LOOK_CONSTRUCTION_SITES, pos);
+
+            if (creepsAtPos.length === 0 &&
+                structuresAtPos.length === 0 &&
+                constructionSitesAtPos.length === 0) {
               positions.push(pos);
             }
           }
@@ -248,19 +261,14 @@ function findBestContainerPosition(room: Room): RoomPosition | null {
     }
 
     if (positions.length > 0) {
-      const closestPos = positions.reduce((best, current) => {
+      // 选择距离矿点最近的位置
+      return positions.reduce((best, current) => {
         return current.getRangeTo(source) < best.getRangeTo(source) ? current : best;
       });
-
-      const distance = closestPos.getRangeTo(source);
-      if (distance < minDistance) {
-        minDistance = distance;
-        bestPos = closestPos;
-      }
     }
   }
 
-  return bestPos;
+  return null;
 }
 
 // 更新道路规划
@@ -444,7 +452,7 @@ function spawnCreeps(room: Room, creepCounts: any, hasBasic: boolean): void {
   const miningSpots = Memory.rooms[room.name].miningSpots;
   const dynamicRoleLimits = {
     ...ROLE_LIMITS,
-    staticHarvester: Math.max(0, miningSpots.length - 1) // 保留一个采矿点给移动矿工
+    staticHarvester: Math.max(0, miningSpots.length) // 根据采矿点数量调整静态矿工数量
   };
 
   // 根据基础兵种状态调整生产策略
@@ -455,7 +463,7 @@ function spawnCreeps(room: Room, creepCounts: any, hasBasic: boolean): void {
   } else {
     // 已建立基础兵种，建筑者和升级工可以开始工作
     // 优先生产更多运输兵和矿工，然后是建筑者和升级工
-    priorities = ['carrier', 'harvester', 'staticHarvester', 'upgrader', 'builder'];
+    priorities = ['carrier',  'staticHarvester', 'upgrader', 'builder'];
   }
 
   for (const role of priorities) {
@@ -496,7 +504,6 @@ function spawnCreeps(room: Room, creepCounts: any, hasBasic: boolean): void {
 // 根据房间状态动态调整生产优先级
 function getSpawnPriorities(room: Room, creepCounts: any, roomEnergy: number): string[] {
   // 基础优先级：先保证每个兵种都有一个
-  // const basePriorities = ['carrier', 'harvester', 'staticHarvester', 'upgrader', 'builder'];
   const basePriorities = ['carrier', 'staticHarvester', 'upgrader', 'builder'];
 
   // 检查哪些兵种还没有
@@ -513,38 +520,28 @@ function getSpawnPriorities(room: Room, creepCounts: any, roomEnergy: number): s
   }
 
   // 如果所有兵种都有至少一个，按优先级继续生产
-  const normalPriorities = ['carrier', 'harvester', 'staticHarvester', 'upgrader', 'builder'];
-
-  // 如果能量严重不足，优先生产移动矿工
-  if (roomEnergy < 300) {
-    return ['harvester', 'carrier', 'staticHarvester', 'upgrader', 'builder'];
-  }
-
-  // 如果没有移动矿工，优先生产
-  if (creepCounts.harvester === 0) {
-    return ['harvester', 'carrier', 'staticHarvester', 'upgrader', 'builder'];
-  }
+  const normalPriorities = ['carrier', 'staticHarvester', 'upgrader', 'builder'];
 
   // 如果没有运输者，优先生产
   if (creepCounts.carrier === 0) {
-    return ['carrier', 'harvester', 'staticHarvester', 'upgrader', 'builder'];
+    return ['carrier', 'staticHarvester', 'upgrader', 'builder'];
   }
 
   // 如果有采矿点且缺少静态矿工，优先生产
   const miningSpots = Memory.rooms[room.name].miningSpots;
   if (miningSpots.length > 0 && creepCounts.staticHarvester < miningSpots.length - 1) {
-    return ['staticHarvester', 'carrier', 'harvester', 'upgrader', 'builder'];
+    return ['staticHarvester', 'carrier', 'upgrader', 'builder'];
   }
 
   // 如果控制器等级较低，优先升级
   if (room.controller && room.controller.level < 3) {
-    return ['upgrader', 'harvester', 'staticHarvester', 'carrier', 'builder'];
+    return ['upgrader', 'staticHarvester', 'carrier', 'builder'];
   }
 
   // 如果有建筑任务，优先建造者
   const constructionSites = room.find(FIND_CONSTRUCTION_SITES);
   if (constructionSites.length > 0) {
-    return ['builder', 'harvester', 'staticHarvester', 'carrier', 'upgrader'];
+    return ['builder', 'staticHarvester', 'carrier', 'upgrader'];
   }
 
   return normalPriorities;
@@ -552,8 +549,7 @@ function getSpawnPriorities(room: Room, creepCounts: any, roomEnergy: number): s
 
 // 检查房间是否已经建立了基础兵种
 function hasBasicCreeps(creepCounts: any): boolean {
-  return creepCounts.harvester > 0 &&
-         creepCounts.carrier > 0 &&
+  return creepCounts.carrier > 0 &&
          creepCounts.staticHarvester > 0 &&
          creepCounts.upgrader > 0 &&
          creepCounts.builder > 0;
@@ -562,11 +558,6 @@ function hasBasicCreeps(creepCounts: any): boolean {
 // 根据可用能量获取最优身体部件
 function getOptimalBodyParts(role: string, availableEnergy: number): BodyPartConstant[] {
   const baseConfigs = {
-    harvester: [
-      [WORK, CARRY, MOVE],                    // 300 能量
-      [WORK, WORK, CARRY, MOVE],              // 400 能量
-      [WORK, WORK, CARRY, CARRY, MOVE, MOVE] // 500 能量
-    ],
     staticHarvester: [
       [WORK],                                 // 100 能量
       [WORK, WORK],                           // 200 能量
@@ -635,9 +626,6 @@ function getErrorMessage(result: number): string {
 
 function runCreepRole(creep: Creep): void {
   switch (creep.memory.role) {
-    case 'harvester':
-      RoleHarvester.run(creep);
-      break;
     case 'staticHarvester':
       RoleStaticHarvester.run(creep);
       break;
