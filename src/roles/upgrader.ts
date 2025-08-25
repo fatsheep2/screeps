@@ -36,6 +36,17 @@ export class RoleUpgrader {
     }
 
     private static getEnergy(creep: Creep): void {
+      // 检查房间中是否有搬运工（Carrier）
+      const carriers = creep.room.find(FIND_MY_CREEPS, {
+        filter: (c) => c.memory.role === 'carrier'
+      });
+
+      if (carriers.length === 0) {
+        // 没有搬运工，等待基础工种建立
+        creep.say('⏳ 等待搬运工');
+        return;
+      }
+
       // 获取能量的优先级顺序
       let target: Structure | null = null;
 
