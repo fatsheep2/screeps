@@ -30,12 +30,79 @@ export class RoleHealer {
     const targetRoom = creep.memory.attackTarget;
     if (!targetRoom) return;
 
-    // 如果不在目标房间，移动到目标房间
+    // 第一步：检查是否到达目标房间
     if (creep.room.name !== targetRoom) {
+      // 还没到达目标房间，继续移动
+      console.log(`[牧师${creep.name}] 还没到达目标房间 ${targetRoom}，当前在房间 ${creep.room.name}，继续移动`);
       this.moveToTargetRoom(creep, targetRoom);
       return;
     }
 
+    // 第二步：已经到达目标房间，检查小队集结状态
+    console.log(`[牧师${creep.name}] 🎉 已到达目标房间 ${targetRoom}！检查小队集结状态`);
+
+    if (this.checkSquadAssembly(creep)) {
+      // 小队集结完成，开始执行战斗逻辑
+      console.log(`[牧师${creep.name}] 小队集结完成！开始执行战斗逻辑`);
+      this.executeCombatLogic(creep);
+    } else {
+      // 等待其他队员集结
+      console.log(`[牧师${creep.name}] 等待其他队员集结...`);
+      this.waitForAssembly(creep);
+    }
+  }
+
+  // 检查小队集结状态
+  private static checkSquadAssembly(creep: Creep): boolean {
+    if (!creep.memory.squadId || !Memory.combatSquads || !Memory.combatSquads[creep.memory.squadId]) {
+      console.log(`[牧师${creep.name}] 没有战斗小组信息，无法检查集结状态`);
+      return false;
+    }
+
+    const squad = Memory.combatSquads[creep.memory.squadId];
+    const targetRoom = creep.memory.attackTarget;
+
+    if (!targetRoom) return false;
+
+    // 检查所有队员是否都在目标房间
+    for (const [role, memberName] of Object.entries(squad.members)) {
+      if (!memberName) continue;
+
+      const member = Game.creeps[memberName];
+      if (!member) {
+        console.log(`[牧师${creep.name}] 队员 ${memberName} 不存在`);
+        continue;
+      }
+
+      if (member.room.name !== targetRoom) {
+        console.log(`[牧师${creep.name}] 队员 ${memberName} (${role}) 还没到达目标房间，当前在 ${member.room.name}`);
+        return false;
+      }
+    }
+
+    // 所有队员都在目标房间，集结完成
+    console.log(`[牧师${creep.name}] 🎯 所有队员都已到达目标房间，集结完成！`);
+    return true;
+  }
+
+  // 等待集结
+  private static waitForAssembly(creep: Creep): void {
+    // 在房间中心附近等待，避免被敌人攻击
+    const centerPos = new RoomPosition(25, 25, creep.room.name);
+
+    if (creep.pos.getRangeTo(centerPos) > 5) {
+      creep.moveTo(centerPos, {
+        visualizePathStyle: { stroke: '#ffff00' },
+        maxRooms: 1
+      });
+      creep.say('⏳ 等待集结');
+    } else {
+      creep.say('⏳ 等待集结');
+    }
+  }
+
+  // 执行战斗逻辑
+  private static executeCombatLogic(creep: Creep): void {
     // 在目标房间中寻找需要治疗的友军
     const target = this.findHealTarget(creep);
     if (target) {
@@ -50,34 +117,22 @@ export class RoleHealer {
 
   // 移动到目标房间
   private static moveToTargetRoom(creep: Creep, targetRoom: string): void {
-    // 如果已经在目标房间，直接返回
-    if (creep.room.name === targetRoom) {
-      return;
-    }
+    console.log(`[牧师${creep.name}] 向目标房间 ${targetRoom} 移动，当前在房间 ${creep.room.name}`);
 
-    // 使用 exit 移动到目标房间
-    const exits = creep.room.findExitTo(targetRoom);
-    if (exits === ERR_NO_PATH) {
-      console.log(`牧师 ${creep.name} 攻击任务中，移动到目标房间`);
-      return;
-    }
+    // 直接移动到目标房间的中心位置
+    const targetPos = new RoomPosition(25, 25, targetRoom);
+    const moveResult = creep.moveTo(targetPos, {
+      visualizePathStyle: { stroke: '#ff00ff' }
+    });
 
-    if (exits === ERR_INVALID_ARGS) {
-      console.log(`牧师 ${creep.name} 目标房间 ${targetRoom} 无效`);
-      return;
-    }
-
-    // 移动到出口
-    const exit = creep.pos.findClosestByRange(exits);
-    if (exit) {
-      creep.moveTo(exit, {
-        visualizePathStyle: { stroke: '#ff00ff' }
-      });
-      creep.say('🚶 移动');
+    if (moveResult === OK) {
+      creep.say('🚀 向目标房间移动');
+      console.log(`[牧师${creep.name}] 成功设置移动到目标房间 ${targetRoom}`);
+    } else {
+      creep.say('❌ 移动失败');
+      console.log(`[牧师${creep.name}] 移动到目标房间失败: ${moveResult}`);
     }
   }
-
-
 
   // 寻找治疗目标
   private static findHealTarget(creep: Creep): Creep | null {
@@ -113,10 +168,6 @@ export class RoleHealer {
       creep.moveTo(target);
     }
   }
-
-
-
-
 
   // 巡逻逻辑
   private static patrol(creep: Creep): void {
@@ -245,15 +296,4 @@ export class RoleHealer {
       y: Math.sign(dy) || (Math.random() > 0.5 ? 1 : -1)
     };
   }
-
-
-  // 检查是否需要紧急治疗（预留功能）
-  // private static needsEmergencyHeal(creep: Creep): boolean {
-  //   // 检查周围是否有生命值很低的友军
-  //   const criticalAllies = creep.room.find(FIND_MY_CREEPS, {
-  //     filter: (ally) => ally.hits < ally.hitsMax * 0.3 && creep.pos.getRangeTo(ally) <= 3
-  //   });
-  //
-  //   return criticalAllies.length > 0;
-  // }
 }

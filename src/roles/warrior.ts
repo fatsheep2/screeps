@@ -30,12 +30,79 @@ export class RoleWarrior {
     const targetRoom = creep.memory.attackTarget;
     if (!targetRoom) return;
 
-    // 如果不在目标房间，移动到目标房间
+    // 第一步：检查是否到达目标房间
     if (creep.room.name !== targetRoom) {
+      // 还没到达目标房间，继续移动
+      console.log(`[战士${creep.name}] 还没到达目标房间 ${targetRoom}，当前在房间 ${creep.room.name}，继续移动`);
       this.moveToTargetRoom(creep, targetRoom);
       return;
     }
 
+    // 第二步：已经到达目标房间，检查小队集结状态
+    console.log(`[战士${creep.name}] 🎉 已到达目标房间 ${targetRoom}！检查小队集结状态`);
+
+    if (this.checkSquadAssembly(creep)) {
+      // 小队集结完成，开始执行战斗逻辑
+      console.log(`[战士${creep.name}] 小队集结完成！开始执行战斗逻辑`);
+      this.executeCombatLogic(creep);
+    } else {
+      // 等待其他队员集结
+      console.log(`[战士${creep.name}] 等待其他队员集结...`);
+      this.waitForAssembly(creep);
+    }
+  }
+
+  // 检查小队集结状态
+  private static checkSquadAssembly(creep: Creep): boolean {
+    if (!creep.memory.squadId || !Memory.combatSquads || !Memory.combatSquads[creep.memory.squadId]) {
+      console.log(`[战士${creep.name}] 没有战斗小组信息，无法检查集结状态`);
+      return false;
+    }
+
+    const squad = Memory.combatSquads[creep.memory.squadId];
+    const targetRoom = creep.memory.attackTarget;
+
+    if (!targetRoom) return false;
+
+    // 检查所有队员是否都在目标房间
+    for (const [role, memberName] of Object.entries(squad.members)) {
+      if (!memberName) continue;
+
+      const member = Game.creeps[memberName];
+      if (!member) {
+        console.log(`[战士${creep.name}] 队员 ${memberName} 不存在`);
+        continue;
+      }
+
+      if (member.room.name !== targetRoom) {
+        console.log(`[战士${creep.name}] 队员 ${memberName} (${role}) 还没到达目标房间，当前在 ${member.room.name}`);
+        return false;
+      }
+    }
+
+    // 所有队员都在目标房间，集结完成
+    console.log(`[战士${creep.name}] 🎯 所有队员都已到达目标房间，集结完成！`);
+    return true;
+  }
+
+  // 等待集结
+  private static waitForAssembly(creep: Creep): void {
+    // 在房间中心附近等待，避免被敌人攻击
+    const centerPos = new RoomPosition(25, 25, creep.room.name);
+
+    if (creep.pos.getRangeTo(centerPos) > 5) {
+      creep.moveTo(centerPos, {
+        visualizePathStyle: { stroke: '#ffff00' },
+        maxRooms: 1
+      });
+      creep.say('⏳ 等待集结');
+    } else {
+      creep.say('⏳ 等待集结');
+    }
+  }
+
+  // 执行战斗逻辑
+  private static executeCombatLogic(creep: Creep): void {
     // 在目标房间中寻找敌人
     const target = this.findTarget(creep);
     if (target) {
@@ -50,84 +117,21 @@ export class RoleWarrior {
 
   // 移动到目标房间
   private static moveToTargetRoom(creep: Creep, targetRoom: string): void {
-    // 如果已经在目标房间，直接返回
-    if (creep.room.name === targetRoom) {
-      return;
+    console.log(`[战士${creep.name}] 向目标房间 ${targetRoom} 移动，当前在房间 ${creep.room.name}`);
+
+    // 直接移动到目标房间的中心位置
+    const targetPos = new RoomPosition(25, 25, targetRoom);
+    const moveResult = creep.moveTo(targetPos, {
+      visualizePathStyle: { stroke: '#ff0000' }
+    });
+
+    if (moveResult === OK) {
+      creep.say('🚀 向目标房间移动');
+      console.log(`[战士${creep.name}] 成功设置移动到目标房间 ${targetRoom}`);
+    } else {
+      creep.say('❌ 移动失败');
+      console.log(`[战士${creep.name}] 移动到目标房间失败: ${moveResult}`);
     }
-
-    // 使用 exit 移动到目标房间
-    const exits = creep.room.findExitTo(targetRoom);
-    if (exits === ERR_NO_PATH) {
-      console.log(`战士 ${creep.name} 无法找到到房间 ${targetRoom} 的路径`);
-      return;
-    }
-
-    if (exits === ERR_INVALID_ARGS) {
-      console.log(`战士 ${creep.name} 目标房间 ${targetRoom} 无效`);
-      return;
-    }
-
-    // 移动到出口
-    const exit = creep.pos.findClosestByRange(exits);
-    if (exit) {
-      const distanceToExit = creep.pos.getRangeTo(exit);
-
-      if (distanceToExit === 0) {
-        // 已经在出口位置，尝试直接移动进入目标房间
-        const direction = this.getDirectionToTargetRoom(creep.room.name, targetRoom);
-        if (direction !== null) {
-          const result = creep.move(direction);
-          if (result === OK) {
-            creep.say('🚪 进入');
-            return;
-          }
-        }
-      } else {
-        // 移动到出口位置
-        creep.moveTo(exit, {
-          visualizePathStyle: { stroke: '#ff0000' }
-        });
-        creep.say('🚶 移动');
-      }
-    }
-  }
-
-  // 计算到目标房间的移动方向
-  private static getDirectionToTargetRoom(currentRoom: string, targetRoom: string): DirectionConstant | null {
-    // 解析房间名称格式：W2N5 -> W3N5
-    const currentMatch = currentRoom.match(/^([WE])(\d+)([NS])(\d+)$/);
-    const targetMatch = targetRoom.match(/^([WE])(\d+)([NS])(\d+)$/);
-
-    if (!currentMatch || !targetMatch) return null;
-
-    const [, currentW, currentX, currentN, currentY] = currentMatch;
-    const [, targetW, targetX, targetN, targetY] = targetMatch;
-
-    // 计算X方向差异
-    if (currentW === targetW && currentX !== targetX) {
-      const xDiff = parseInt(targetX) - parseInt(currentX);
-      if (currentW === 'W') {
-        // 向西的房间，X增加表示向东移动
-        return xDiff > 0 ? RIGHT : LEFT;
-      } else {
-        // 向东的房间，X增加表示向西移动
-        return xDiff > 0 ? LEFT : RIGHT;
-      }
-    }
-
-    // 计算Y方向差异
-    if (currentN === targetN && currentY !== targetY) {
-      const yDiff = parseInt(targetY) - parseInt(currentY);
-      if (currentN === 'N') {
-        // 向北的房间，Y增加表示向南移动
-        return yDiff > 0 ? BOTTOM : TOP;
-      } else {
-        // 向南的房间，Y增加表示向北移动
-        return yDiff > 0 ? TOP : BOTTOM;
-      }
-    }
-
-    return null;
   }
 
   // 搜索敌人

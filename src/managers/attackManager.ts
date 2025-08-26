@@ -202,42 +202,42 @@ function coordinateSquadsMovement(task: AttackTask): void {
 export function updateAttackTasks(): void {
   if (!Memory.attackTasks) return;
 
-  console.log(`[攻击管理] 开始更新攻击任务，总任务数: ${Object.keys(Memory.attackTasks).length}`);
+  // console.log(`[攻击管理] 开始更新攻击任务，总任务数: ${Object.keys(Memory.attackTasks).length}`);
 
   for (const taskId in Memory.attackTasks) {
     const task = Memory.attackTasks![taskId];
-    console.log(`[攻击管理] 更新任务 ${taskId}: 状态=${task.status}, 目标房间=${task.targetRoom}, 编组数=${task.squads.length}`);
+    // console.log(`[攻击管理] 更新任务 ${taskId}: 状态=${task.status}, 目标房间=${task.targetRoom}, 编组数=${task.squads.length}`);
 
     switch (task.status) {
       case 'planning':
-        console.log(`[攻击管理] 任务 ${taskId} 处于规划状态，开始协调编组移动`);
+        // console.log(`[攻击管理] 任务 ${taskId} 处于规划状态，开始协调编组移动`);
         // 规划阶段：协调编组移动到目标房间
         coordinateSquadsMovement(task);
         // 自动转换为移动状态
         task.status = 'moving';
-        console.log(`[攻击管理] 任务 ${taskId} 状态更新为: moving`);
+        // console.log(`[攻击管理] 任务 ${taskId} 状态更新为: moving`);
         break;
 
       case 'moving':
-        console.log(`[攻击管理] 任务 ${taskId} 处于移动状态，检查进度`);
+        // console.log(`[攻击管理] 任务 ${taskId} 处于移动状态，检查进度`);
         // 移动阶段：检查编组是否到达目标房间
         checkTaskProgress(task);
         break;
 
       case 'engaging':
-        console.log(`[攻击管理] 任务 ${taskId} 处于交战状态，执行攻击`);
+        // console.log(`[攻击管理] 任务 ${taskId} 处于交战状态，执行攻击`);
         // 交战阶段：执行攻击逻辑
         executeAttackTask(taskId);
         break;
 
               case 'retreating':
-          console.log(`[攻击管理] 任务 ${taskId} 处于撤退状态`);
+          // console.log(`[攻击管理] 任务 ${taskId} 处于撤退状态`);
           // 撤退阶段：编组返回源房间
           break;
 
         case 'completed':
         case 'failed':
-          console.log(`[攻击管理] 任务 ${taskId} 已完成/失败，清理任务`);
+          // console.log(`[攻击管理] 任务 ${taskId} 已完成/失败，清理任务`);
           // 任务完成或失败，清理
           break;
     }
@@ -258,6 +258,7 @@ function checkTaskProgress(task: AttackTask): void {
 
     // 检查小组成员是否都在目标房间
     const membersInTargetRoom = Object.values(squad.members).every(memberName => {
+      if (!memberName) return false;
       const member = Game.creeps[memberName];
       return member && member.room.name === task.targetRoom;
     });
@@ -267,6 +268,7 @@ function checkTaskProgress(task: AttackTask): void {
 
       // 检查是否有成员接近目标房间（在相邻房间）
       const membersNearTargetRoom = Object.values(squad.members).some(memberName => {
+        if (!memberName) return false;
         const member = Game.creeps[memberName];
         if (!member) return false;
 
@@ -281,6 +283,7 @@ function checkTaskProgress(task: AttackTask): void {
     } else {
       // 检查是否有小组成员正在战斗
       const hasEngagement = Object.values(squad.members).some(memberName => {
+        if (!memberName) return false;
         const member = Game.creeps[memberName];
         return member && member.memory.working;
       });
@@ -291,10 +294,12 @@ function checkTaskProgress(task: AttackTask): void {
   // 更新任务状态
   if (allSquadsInTargetRoom && task.status === 'moving') {
     task.status = 'engaging';
-    console.log(`攻击任务 ${task.id} 进入战斗阶段`);
+    console.log(`攻击任务 ${task.id} 进入战斗阶段，所有编组已到达目标房间`);
   } else if (anySquadNearTargetRoom && task.status === 'moving') {
     // 如果有编组接近目标房间，继续移动状态
     console.log(`攻击任务 ${task.id} 编组接近目标房间，继续移动`);
+  } else if (task.status === 'moving') {
+    console.log(`攻击任务 ${task.id} 编组正在向目标房间移动中...`);
   }
 
   if (anySquadEngaging && task.status === 'engaging') {

@@ -76,7 +76,6 @@ export function manageStaticHarvesters(room: Room): void {
 
       if (bestSpot) {
         harvester.memory.targetId = bestSpot;
-        console.log(`静态矿工 ${harvester.name} 分配到采矿点: ${bestSpot}`);
       }
     }
   }

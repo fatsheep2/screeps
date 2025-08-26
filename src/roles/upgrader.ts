@@ -59,32 +59,42 @@ export class RoleUpgrader {
       // 获取能量的优先级顺序
       let target: Structure | null = null;
 
-      // 1. 优先从 Spawn 和 Extension 获取能量（主城资源）
-      const energyStructures = creep.room.find(FIND_STRUCTURES, {
-        filter: (structure) => {
-          return (structure.structureType === STRUCTURE_SPAWN ||
-                  structure.structureType === STRUCTURE_EXTENSION) &&
-                 structure.store.getUsedCapacity(RESOURCE_ENERGY) > 100; // 保留一些给生产
-        }
-      });
-
-      if (energyStructures.length > 0) {
-        // 选择最近的 Spawn 或 Extension
-        target = creep.pos.findClosestByPath(energyStructures);
+      // 1. 优先从 Storage 获取能量
+      const storage = creep.room.storage;
+      if (storage && storage.store.getUsedCapacity(RESOURCE_ENERGY) > 0) {
+        target = storage;
+        creep.say('🏪 从仓库获取');
       }
 
-      // 2. 从容器或存储器获取
+      // 2. 其次从 Container 获取能量
       if (!target) {
         const containers = creep.room.find(FIND_STRUCTURES, {
           filter: (structure) => {
-            return (structure.structureType === STRUCTURE_CONTAINER ||
-                    structure.structureType === STRUCTURE_STORAGE) &&
+            return structure.structureType === STRUCTURE_CONTAINER &&
                    structure.store.getUsedCapacity(RESOURCE_ENERGY) > 0;
           }
         });
 
         if (containers.length > 0) {
           target = creep.pos.findClosestByPath(containers);
+          creep.say('📦 从容器获取');
+        }
+      }
+
+      // 3. 最后从 Spawn 和 Extension 获取能量（主城资源）
+      if (!target) {
+        const energyStructures = creep.room.find(FIND_STRUCTURES, {
+          filter: (structure) => {
+            return (structure.structureType === STRUCTURE_SPAWN ||
+                    structure.structureType === STRUCTURE_EXTENSION) &&
+                   structure.store.getUsedCapacity(RESOURCE_ENERGY) > 100; // 保留一些给生产
+          }
+        });
+
+        if (energyStructures.length > 0) {
+          // 选择最近的 Spawn 或 Extension
+          target = creep.pos.findClosestByPath(energyStructures);
+          creep.say('🏰 从主城获取');
         }
       }
 

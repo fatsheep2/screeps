@@ -5,7 +5,6 @@ import resolve from '@rollup/plugin-node-resolve';
 import commonjs from '@rollup/plugin-commonjs';
 import typescript from 'rollup-plugin-typescript2';
 import screeps from 'rollup-plugin-screeps';
-import alias from '@rollup/plugin-alias';
 import path from 'path';
 import fs from 'fs';
 
@@ -52,12 +51,6 @@ export default {
   },
 
   plugins: [
-    alias({
-      entries: [
-        { find: 'roles', replacement: path.resolve(__dirname, 'src/roles') },
-        { find: 'utils', replacement: path.resolve(__dirname, 'src/utils') }
-      ]
-    }),
     clear({ targets: ["dist"] }),
     resolve({ rootDir: "src" }),
     commonjs(),

@@ -14,9 +14,9 @@ export const COMBAT_BODY_PARTS = {
     ratios: { TOUGH: 1, MOVE: 3, ATTACK: 3 }
   },
   [COMBAT_ROLES.TANK]: {
-    base: [TOUGH, MOVE, MOVE], // 1:2 配比
+    base: [TOUGH, TOUGH, MOVE], // 1:2 配比
     cost: 110, // TOUGH(10) + 2*MOVE(100) = 110
-    ratios: { TOUGH: 1, MOVE: 2 }
+    ratios: { TOUGH: 2, MOVE: 1 }
   },
   [COMBAT_ROLES.HEALER]: {
     base: [MOVE, HEAL, HEAL], // 1:2 配比

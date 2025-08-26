@@ -193,54 +193,7 @@ export class RoleCarrier {
 
 
 
-    // 帮助升级者获取能量
-    private static helpUpgraders(creep: Creep): void {
-      // 从容器中取能量
-      const containers = creep.room.find(FIND_STRUCTURES, {
-        filter: (structure) => {
-          return (structure.structureType === STRUCTURE_CONTAINER ||
-                  structure.structureType === STRUCTURE_STORAGE) &&
-                 structure.store.getUsedCapacity(RESOURCE_ENERGY) > 0;
-        }
-      });
 
-      if (containers.length > 0) {
-        const container = creep.pos.findClosestByPath(containers);
-        if (container) {
-          // 从容器取能量
-          const result = creep.withdraw(container, RESOURCE_ENERGY);
-          if (result === OK) {
-            creep.say('📦 取能量');
-            return; // 取到能量后，下一轮会执行运输逻辑
-          } else if (result === ERR_NOT_IN_RANGE) {
-            creep.moveTo(container, {
-              visualizePathStyle: { stroke: '#ffaa00' }
-            });
-            return;
-          }
-        }
-      }
-
-      // 如果没有容器或取能量失败，寻找需要能量的升级者
-      const upgraders = creep.room.find(FIND_MY_CREEPS, {
-        filter: (c) => c.memory.role === 'upgrader' &&
-                       c.store.getFreeCapacity(RESOURCE_ENERGY) > 0
-      });
-
-      if (upgraders.length > 0) {
-        const upgrader = creep.pos.findClosestByPath(upgraders);
-        if (upgrader) {
-          creep.say('⚡ 帮助升级者');
-          // 移动到升级者附近转移能量
-          creep.moveTo(upgrader, {
-            visualizePathStyle: { stroke: '#ffffff' }
-          });
-        }
-      } else {
-        // 没有需要帮助的升级者，原地等待
-        creep.say('⏳ 等待任务');
-      }
-    }
 
     // 收集资源
     private static collectResources(creep: Creep): void {
@@ -302,12 +255,11 @@ export class RoleCarrier {
         }
       }
 
-      // 4. 从满载的容器收集
+      // 4. 从满载的容器收集，准备搬运到storage
       if (!target) {
         const containers = creep.room.find(FIND_STRUCTURES, {
           filter: (structure) => {
-            return (structure.structureType === STRUCTURE_CONTAINER ||
-                    structure.structureType === STRUCTURE_STORAGE) &&
+            return structure.structureType === STRUCTURE_CONTAINER &&
                    structure.store.getUsedCapacity(RESOURCE_ENERGY) > 0;
           }
         });
@@ -341,15 +293,14 @@ export class RoleCarrier {
         if (this.shouldHelpStaticHarvester(creep)) {
           this.helpStaticHarvester(creep);
         } else {
-          // 等待任务时主动帮助升级者
-          this.helpUpgraders(creep);
+          creep.say('⏳ 等待任务');
         }
       }
     }
 
     // 运输资源
     private static deliverResources(creep: Creep): void {
-      let target: Structure | ConstructionSite | Creep | null = null;
+      let target: Structure | ConstructionSite | null = null;
 
       // 1. 优先运输到 Extension（扩展建筑）
       const extensions = creep.room.find(FIND_STRUCTURES, {
@@ -379,16 +330,12 @@ export class RoleCarrier {
         }
       }
 
-      // 3. 运输到升级者（优先帮助升级者）
+      // 3. 运输到 Storage（优先将能量集中到storage）
       if (!target) {
-        const upgraders = creep.room.find(FIND_MY_CREEPS, {
-          filter: (c) => c.memory.role === 'upgrader' &&
-                         c.store.getFreeCapacity(RESOURCE_ENERGY) > 0
-        });
-
-        if (upgraders.length > 0) {
-          target = creep.pos.findClosestByPath(upgraders);
-          creep.say('⚡ 帮助升级者');
+        const storage = creep.room.storage;
+        if (storage && storage.store.getFreeCapacity(RESOURCE_ENERGY) > 0) {
+          target = storage;
+          creep.say('🏪 填充仓库');
         }
       }
 
@@ -396,8 +343,7 @@ export class RoleCarrier {
       if (!target) {
         const containers = creep.room.find(FIND_STRUCTURES, {
           filter: (structure) => {
-            return (structure.structureType === STRUCTURE_CONTAINER ||
-                    structure.structureType === STRUCTURE_STORAGE) &&
+            return structure.structureType === STRUCTURE_CONTAINER &&
                    structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0;
           }
         });
@@ -408,34 +354,19 @@ export class RoleCarrier {
         }
       }
 
-      // 4. 跳过建筑工地（搬运工不负责建造）
-      // 建筑工地由专门的建造者处理
-
-      // 5. 跳过控制器（搬运工没有 WORK 部件，不能升级）
-      // 控制器升级由专门的升级者处理
-
       // 执行运输
       if (target) {
         let result: number;
 
-        if (target instanceof Creep) {
-          // 目标是升级者，转移能量
-          result = creep.transfer(target, RESOURCE_ENERGY);
-        } else {
-          // 目标是建筑，转移能量
-          result = creep.transfer(target, RESOURCE_ENERGY);
-        }
+        // 目标是建筑，转移能量
+        result = creep.transfer(target, RESOURCE_ENERGY);
 
         if (result === ERR_NOT_IN_RANGE) {
           creep.moveTo(target, {
             visualizePathStyle: { stroke: '#ffffff' }
           });
         } else if (result === OK) {
-          if (target instanceof Creep) {
-            creep.say('⚡');
-          } else {
-            creep.say('🚚');
-          }
+          creep.say('🚚');
         }
       } else {
         // 如果没有运输目标，尝试帮助静态矿工移动
