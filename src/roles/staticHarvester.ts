@@ -6,6 +6,11 @@ export class RoleStaticHarvester {
       return;
     }
 
+    // 检查自己的 targetId 是否仍然有效（每10个tick检查一次）
+    if (Game.time % 10 === 0) {
+      this.validateTargetId(creep);
+    }
+
     const [x, y] = creep.memory.targetId.split(',').map(Number);
     const targetPos = new RoomPosition(x, y, creep.room.name);
 
@@ -20,7 +25,7 @@ export class RoleStaticHarvester {
     } else {
       // 不能工作，等待运输
       creep.memory.working = false;
-      creep.say('⏳ 等待运输');
+      // 删除等待运输的提示，避免资源挖空时也显示
     }
   }
 
@@ -43,15 +48,50 @@ export class RoleStaticHarvester {
     // 寻找第一个未被占用的采矿点
     for (const spot of roomMemory.miningSpots) {
       if (!occupiedSpots.includes(spot)) {
-        creep.memory.targetId = spot;
-        creep.say(`📍 分配到 ${spot}`);
-        console.log(`静态矿工 ${creep.name} 分配到采矿点 ${spot}`);
-        return;
+        // 额外检查：确保这个位置实际上没有被其他矿工占据
+        const [spotX, spotY] = spot.split(',').map(Number);
+        const spotPos = new RoomPosition(spotX, spotY, creep.room.name);
+
+        // 检查这个位置是否有其他矿工
+        const creepsAtSpot = spotPos.lookFor(LOOK_CREEPS);
+        const hasOtherHarvester = creepsAtSpot.some(c =>
+          c.memory.role === 'staticHarvester' && c.id !== creep.id
+        );
+
+        if (!hasOtherHarvester) {
+          creep.memory.targetId = spot;
+          creep.say(`📍 分配到 ${spot}`);
+          console.log(`静态矿工 ${creep.name} 分配到采矿点 ${spot}`);
+          return;
+        } else {
+          console.log(`采矿点 ${spot} 已被其他矿工实际占据，跳过`);
+        }
       }
     }
 
     // 如果所有采矿点都被占用，等待
     creep.say('⏳ 所有采矿点已满');
+  }
+
+  // 验证 targetId 是否仍然有效
+  private static validateTargetId(creep: Creep): void {
+    if (!creep.memory.targetId) return;
+
+    const [x, y] = creep.memory.targetId.split(',').map(Number);
+    const targetPos = new RoomPosition(x, y, creep.room.name);
+
+    // 检查这个位置是否有其他矿工
+    const creepsAtSpot = targetPos.lookFor(LOOK_CREEPS);
+    const hasOtherHarvester = creepsAtSpot.some(c =>
+      c.memory.role === 'staticHarvester' && c.id !== creep.id
+    );
+
+    if (hasOtherHarvester) {
+      // 发现冲突，清除 targetId 并重新分配
+      console.log(`静态矿工 ${creep.name} 发现采矿点冲突，重新分配`);
+      delete creep.memory.targetId;
+      creep.say('⚠️ 重新分配');
+    }
   }
 
   // travel 方法：检查是否可以到达采矿点并工作

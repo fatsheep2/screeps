@@ -29,15 +29,16 @@ declare global {
     targetId?: string;     // 目标ID
     lastPos?: { x: number, y: number }; // 记录上一次位置，用于道路规划
     helpingStaticHarvester?: string; // 要帮助的静态矿工的名字
+    lastExchangeTime?: number; // 记录最后一次交换完成的时间
   }
 }
 
 // 各角色需要的数量配置
 const ROLE_LIMITS = {
   staticHarvester: 0,  // 静态矿工（根据采矿点数量动态调整）
-  upgrader: 2,         // 升级者
+  upgrader: 5,         // 升级者
   builder: 2,          // 建造者
-  carrier: 2           // 运输者（增加数量以支持静态矿工）
+  carrier: 4           // 运输者（增加数量以支持静态矿工）
 };
 
 // 生产新 Creep 的身体部件配置（基础配置）
@@ -612,11 +613,11 @@ function getAdvancedSpawnPriorities(room: Room, creepCounts: any, roomEnergy: nu
   }
 
   // 最后是其他工种
-  if (creepCounts.upgrader < 2) {
+  if (creepCounts.upgrader < ROLE_LIMITS.upgrader) {
     priorities.push('upgrader');
   }
 
-  if (creepCounts.builder < 2) {
+  if (creepCounts.builder < ROLE_LIMITS.builder) {
     priorities.push('builder');
   }
 
@@ -645,44 +646,16 @@ function getOptimalBodyParts(role: string, availableEnergy: number, creepCounts:
     return [];
   }
 
-  // 检查每个工种的数量，决定是否需要扩展
-  let extensionLevel = 0;
-
-  // 如果每个工种都大于1，开始扩展
-  if (creepCounts.carrier > 1 &&
-      creepCounts.staticHarvester > 1 &&
-      creepCounts.upgrader > 1 &&
-      creepCounts.builder > 1) {
-
-    // 计算可以扩展几次
-    const extensionParts = BODY_EXTENSIONS[role as keyof typeof BODY_EXTENSIONS];
-    if (extensionParts) {
-      const extensionCost = getBodyCost(extensionParts);
-
-      // 计算可以扩展的次数
-      const maxExtensions = Math.floor((availableEnergy - baseCost) / extensionCost);
-      extensionLevel = Math.min(maxExtensions, 2); // 最多扩展2次，避免过度复杂
-    }
-  }
-
-  // 构建最终的身体部件配置
-  let finalParts = [...baseParts];
-
-  // 添加扩展部件
-  const extensionParts = BODY_EXTENSIONS[role as keyof typeof BODY_EXTENSIONS];
-  if (extensionParts && extensionLevel > 0) {
-    for (let i = 0; i < extensionLevel; i++) {
-      finalParts = finalParts.concat(extensionParts);
-    }
-  }
-
-  // 验证最终配置是否在能量范围内
-  const finalCost = getBodyCost(finalParts);
-  if (finalCost <= availableEnergy) {
-    return finalParts;
+  // 根据角色类型使用不同的升级策略
+  if (role === 'carrier') {
+    // 搬运工：按照 MOVE:CARRY 1:2 的比例升级
+    return getCarrierOptimalParts(availableEnergy, baseParts);
+  } else if (role === 'staticHarvester') {
+    // 静态矿工：按照 WORK 的倍数升级
+    return getStaticHarvesterOptimalParts(availableEnergy, baseParts);
   } else {
-    // 如果超出能量范围，回退到基础配置
-    return baseParts;
+    // 其他角色：使用原来的逻辑
+    return getStandardOptimalParts(availableEnergy, baseParts, creepCounts, role);
   }
 }
 
@@ -776,5 +749,96 @@ function updateTaskSystem(room: Room): void {
         delete carrier.memory.targetId;
       }
     }
+  }
+}
+
+// 搬运工的最优身体部件配置（按照 MOVE:CARRY 1:2 的比例）
+function getCarrierOptimalParts(availableEnergy: number, baseParts: BodyPartConstant[]): BodyPartConstant[] {
+  let finalParts = [...baseParts];
+
+  // 搬运工基础配置：4 CARRY + 2 MOVE = 300 能量
+  // 可以添加更多 CARRY 和 MOVE，保持 1:2 比例
+  const additionalParts = [CARRY, CARRY, MOVE]; // 150 能量
+
+  // 计算可以添加多少组额外部件
+  const additionalCost = getBodyCost(additionalParts);
+  const maxGroups = Math.floor((availableEnergy - getBodyCost(baseParts)) / additionalCost);
+
+  // 最多添加 3 组，避免过度复杂
+  const groupsToAdd = Math.min(maxGroups, 3);
+
+  for (let i = 0; i < groupsToAdd; i++) {
+    finalParts = finalParts.concat(additionalParts);
+  }
+
+  return finalParts;
+}
+
+// 静态矿工的最优身体部件配置（按照 WORK 的倍数）
+function getStaticHarvesterOptimalParts(availableEnergy: number, baseParts: BodyPartConstant[]): BodyPartConstant[] {
+  let finalParts = [...baseParts];
+
+  // 静态矿工基础配置：3 WORK = 300 能量
+  // 可以添加更多 WORK，每次 100 能量
+  const workCost = 100;
+  const baseCost = getBodyCost(baseParts);
+  const remainingEnergy = availableEnergy - baseCost;
+
+  // 计算可以添加多少个 WORK
+  const additionalWork = Math.floor(remainingEnergy / workCost);
+
+  // 最多添加 5 个额外的 WORK，避免过度复杂
+  const workToAdd = Math.min(additionalWork, 5);
+
+  for (let i = 0; i < workToAdd; i++) {
+    finalParts.push(WORK);
+  }
+
+  return finalParts;
+}
+
+// 标准角色的最优身体部件配置（原来的逻辑）
+function getStandardOptimalParts(availableEnergy: number, baseParts: BodyPartConstant[], creepCounts: any, role: string): BodyPartConstant[] {
+  // 计算基础配置的能量消耗
+  const baseCost = getBodyCost(baseParts);
+
+  // 检查每个工种的数量，决定是否需要扩展
+  let extensionLevel = 0;
+
+  // 如果每个工种都大于1，开始扩展
+  if (creepCounts.carrier > 1 &&
+      creepCounts.staticHarvester > 1 &&
+      creepCounts.upgrader > 1 &&
+      creepCounts.builder > 1) {
+
+    // 计算可以扩展几次
+    const extensionParts = BODY_EXTENSIONS[role as keyof typeof BODY_EXTENSIONS];
+    if (extensionParts) {
+      const extensionCost = getBodyCost(extensionParts);
+
+      // 计算可以扩展的次数
+      const maxExtensions = Math.floor((availableEnergy - baseCost) / extensionCost);
+      extensionLevel = Math.min(maxExtensions, 2); // 最多扩展2次，避免过度复杂
+    }
+  }
+
+  // 构建最终的身体部件配置
+  let finalParts = [...baseParts];
+
+  // 添加扩展部件
+  const extensionParts = BODY_EXTENSIONS[role as keyof typeof BODY_EXTENSIONS];
+  if (extensionParts && extensionLevel > 0) {
+    for (let i = 0; i < extensionLevel; i++) {
+      finalParts = finalParts.concat(extensionParts);
+    }
+  }
+
+  // 验证最终配置是否在能量范围内
+  const finalCost = getBodyCost(finalParts);
+  if (finalCost <= availableEnergy) {
+    return finalParts;
+  } else {
+    // 如果超出能量范围，回退到基础配置
+    return baseParts;
   }
 }
