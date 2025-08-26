@@ -71,9 +71,6 @@ export class RoleUpgrader {
       if (energyStructures.length > 0) {
         // 选择最近的 Spawn 或 Extension
         target = creep.pos.findClosestByPath(energyStructures);
-        if (target) {
-          console.log(`⚡ Upgrader ${creep.name} 从主城获取能量: ${target.structureType}`);
-        }
       }
 
       // 2. 从容器或存储器获取
@@ -88,7 +85,6 @@ export class RoleUpgrader {
 
         if (containers.length > 0) {
           target = creep.pos.findClosestByPath(containers);
-          console.log(`📦 Upgrader ${creep.name} 从容器获取能量`);
         }
       }
 

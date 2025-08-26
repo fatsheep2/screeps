@@ -28,9 +28,7 @@ export function updateMiningSpots(room: Room): void {
             // 只添加不是地形墙的位置
             if (terrain !== 'wall') {
               miningSpots.push(`${pos.x},${pos.y}`);
-              console.log(`添加可用采矿点 (${pos.x},${pos.y})，距离资源点 ${pos.getRangeTo(source)} 格`);
             } else {
-              console.log(`跳过不可用位置 (${pos.x},${pos.y}) - 地形:${terrain}`);
             }
           }
         }

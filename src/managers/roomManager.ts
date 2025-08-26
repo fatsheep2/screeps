@@ -2,11 +2,17 @@ import { updateMiningSpots } from './miningSpotManager';
 import { updateBuildingLayout, updateRoadPlanning } from './buildingManager';
 import { updateTaskSystem, manageStaticHarvesters } from './taskManager';
 import { spawnCreeps } from './spawnManager';
+import { manageCombatProduction, organizeCombatSquads, updateCombatSquads } from './combatManager';
+import { updateAttackTasks } from './attackManager';
 import { countRoomCreeps, hasBasicCreeps } from '../utils/creepUtils';
 import { RoleUpgrader } from '../roles/upgrader';
 import { RoleStaticHarvester } from '../roles/staticHarvester';
 import { RoleBuilder } from '../roles/builder';
 import { RoleCarrier } from '../roles/carrier';
+import { RoleWarrior } from '../roles/warrior';
+import { RoleTank } from '../roles/tank';
+import { RoleArcher } from '../roles/archer';
+import { RoleHealer } from '../roles/healer';
 
 // 管理房间
 export function manageRoom(room: Room): void {
@@ -19,8 +25,20 @@ export function manageRoom(room: Room): void {
   // 尝试生产新 Creep
   spawnCreeps(room, creepCounts, hasBasic);
 
+  // 管理战斗单位生产
+  manageCombatProduction(room);
+
   // 管理静态矿工的放置
   manageStaticHarvesters(room);
+
+  // 编组战斗小组
+  organizeCombatSquads(room);
+
+  // 更新战斗小组状态
+  updateCombatSquads(room);
+
+  // 更新攻击任务状态
+  updateAttackTasks();
 
   // 运行每个 Creep 的逻辑
   const roomCreeps = room.find(FIND_MY_CREEPS);
@@ -43,6 +61,18 @@ function runCreepRole(creep: Creep): void {
       break;
     case 'carrier':
       RoleCarrier.run(creep);
+      break;
+    case 'warrior':
+      RoleWarrior.run(creep);
+      break;
+    case 'tank':
+      RoleTank.run(creep);
+      break;
+    case 'archer':
+      RoleArcher.run(creep);
+      break;
+    case 'healer':
+      RoleHealer.run(creep);
       break;
     default:
       // 未知角色，静默处理

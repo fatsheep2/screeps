@@ -106,7 +106,6 @@ export class RoleCarrier {
       if (target.pos.isEqualTo(targetPos) && !creep.pos.isEqualTo(targetPos)) {
         // 交换完成，清除帮助状态
         creep.say('✅ 交换完成');
-        console.log(`运输兵 ${creep.name} 与矿工 ${target.name} 交换位置完成`);
         delete creep.memory.helpingStaticHarvester;
 
         // 等待几轮确保状态稳定，避免立即被重新选中

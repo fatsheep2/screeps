@@ -167,7 +167,6 @@ export class RoleBuilder {
         // 选择最近的 Spawn 或 Extension
         target = creep.pos.findClosestByPath(energyStructures);
         if (target) {
-          console.log(`🏗️ Builder ${creep.name} 从主城获取能量: ${target.structureType}`);
         }
       }
 
@@ -183,7 +182,6 @@ export class RoleBuilder {
 
         if (containers.length > 0) {
           target = creep.pos.findClosestByPath(containers);
-          console.log(`📦 Builder ${creep.name} 从容器获取能量`);
         }
       }
 
