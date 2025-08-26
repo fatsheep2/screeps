@@ -53,40 +53,212 @@ export function forceAttack(roomName: string, targetRoom: string): void {
     return;
   }
 
-  // 使用 critical 优先级强制创建攻击任务
-  if (typeof global.manualAttack === 'function') {
-    // 这里需要修改 manualAttack 函数以支持 critical 优先级
-    console.log(`🚨 强制攻击模式：${roomName} → ${targetRoom}`);
-    console.log(`⚠️ 注意：即使战斗力量不足也会执行攻击`);
+  console.log(`🚨 强制攻击模式：${roomName} → ${targetRoom}`);
+  console.log(`⚠️ 注意：即使战斗力量不足也会执行攻击`);
 
-    // 临时降低评估要求
-    const originalConfig = global.ATTACK_ASSESSMENT_CONFIG;
-    if (originalConfig) {
-      // 临时调整配置
-      global.ATTACK_ASSESSMENT_CONFIG = {
-        ...originalConfig,
-        SQUAD_CALCULATION: {
-          ...originalConfig.SQUAD_CALCULATION,
-          DIVISOR: 4, // 降低要求（原来是2）
-          MAX_SQUADS: 2 // 降低最大小组数
-        }
+  // 直接调用 manualAttack 函数，不进行任何战斗力量检查
+  if (typeof global.manualAttack === 'function') {
+    // 临时修改全局函数以支持强制攻击
+    const originalManualAttack = global.manualAttack;
+
+    // 重写 manualAttack 函数以跳过战斗力量检查
+    global.manualAttack = (sourceRoom: Room, targetRoom: string) => {
+      console.log(`手动触发攻击: ${sourceRoom.name} → ${targetRoom}`);
+
+      // 检查是否有可用的战斗小组
+      const availableSquads = (global as any).getRoomCombatSquads?.(sourceRoom) || [];
+
+      if (availableSquads.length === 0) {
+        console.log(`❌ 房间 ${sourceRoom.name} 没有可用的战斗小组`);
+        return null;
+      }
+
+      // 直接创建攻击任务，不进行战斗力量评估
+      const taskId = `attack_${Game.time}_${Math.floor(Math.random() * 1000)}`;
+      const task: any = {
+        id: taskId,
+        targetRoom,
+        sourceRoom: sourceRoom.name,
+        squads: availableSquads.map((squad: any) => squad.id),
+        status: 'planning',
+        priority: 'critical',
+        createdAt: Game.time,
+        targetType: 'room',
+        estimatedEnergy: 2000,
+        currentEnergy: sourceRoom.energyAvailable
       };
 
-      const taskId = global.manualAttack(room, targetRoom);
+      // 存储攻击任务
+      if (!Memory.attackTasks) Memory.attackTasks = {};
+      Memory.attackTasks![taskId] = task;
 
-      // 恢复原始配置
-      global.ATTACK_ASSESSMENT_CONFIG = originalConfig;
-
-      if (taskId) {
-        console.log(`✅ 强制攻击任务创建成功: ${taskId}`);
-      } else {
-        console.log(`❌ 强制攻击任务创建失败`);
+      // 为战斗小组分配攻击任务
+      for (const squadId of task.squads) {
+        if (Memory.combatSquads && Memory.combatSquads[squadId]) {
+          Memory.combatSquads[squadId].attackTaskId = taskId;
+          Memory.combatSquads[squadId].status = 'engaged';
+        }
       }
-    } else {
-      console.log(`❌ 无法调整攻击配置`);
+
+      console.log(`✅ 强制攻击任务创建成功: ${taskId}`);
+      console.log(`🎯 使用 ${availableSquads.length} 个战斗小组攻击 ${targetRoom}`);
+
+      // 立即执行攻击任务
+      if (typeof global.executeAttackTask === 'function') {
+        global.executeAttackTask(taskId);
+        console.log(`🚀 攻击任务 ${taskId} 开始执行！`);
+      } else {
+        console.log(`⚠️ 攻击任务已创建，但执行系统未加载`);
+      }
+
+      return taskId;
+    };
+
+    // 执行强制攻击
+    const taskId = global.manualAttack(room, targetRoom);
+
+    // 恢复原始函数
+    global.manualAttack = originalManualAttack;
+
+    if (!taskId) {
+      console.log(`❌ 强制攻击任务创建失败`);
     }
   } else {
     console.log(`❌ 攻击系统未加载`);
+  }
+}
+
+// 手动创建战斗编组
+export function createSquad(roomName: string): void {
+  const room = Game.rooms[roomName];
+  if (!room) {
+    console.log(`❌ 房间 ${roomName} 不存在或不可见`);
+    return;
+  }
+
+  if (!room.controller?.my) {
+    console.log(`❌ 房间 ${roomName} 不是您的房间`);
+    return;
+  }
+
+  console.log(`🔧 手动创建战斗编组: ${roomName}`);
+
+  // 检查房间中的战斗单位
+  const combatCreeps = room.find(FIND_MY_CREEPS, {
+    filter: creep => creep.memory.role && ['tank', 'warrior', 'archer', 'healer'].includes(creep.memory.role)
+  });
+
+  if (combatCreeps.length === 0) {
+    console.log(`❌ 房间 ${roomName} 中没有战斗单位`);
+    return;
+  }
+
+  // 按角色分组
+  const roleGroups: Record<string, Creep[]> = {};
+  for (const role of ['tank', 'warrior', 'archer', 'healer']) {
+    roleGroups[role] = combatCreeps.filter(creep => creep.memory.role === role);
+  }
+
+  // 检查是否有足够的角色来组成编组
+  const canFormSquad = ['tank', 'warrior', 'archer', 'healer'].every(role =>
+    roleGroups[role].filter(creep => !creep.memory.squadId).length > 0
+  );
+
+  if (!canFormSquad) {
+    console.log(`❌ 无法组成完整编组，需要每个角色至少有一个可用单位`);
+    console.log(`当前状态:`);
+    for (const role of ['tank', 'warrior', 'archer', 'healer']) {
+      const available = roleGroups[role].filter(creep => !creep.memory.squadId).length;
+      const total = roleGroups[role].length;
+      console.log(`  ${role}: ${available}/${total} 可用`);
+    }
+    return;
+  }
+
+  // 创建新的战斗编组
+  const squadId = `manual_squad_${Game.time}_${Math.floor(Math.random() * 1000)}`;
+
+  // 为每个角色分配一个单位到战斗小组
+  for (const role of ['tank', 'warrior', 'archer', 'healer']) {
+    const creep = roleGroups[role].find(c => !c.memory.squadId);
+    if (creep) {
+      creep.memory.squadId = squadId;
+      console.log(`✅ ${role}: ${creep.name} 加入编组 ${squadId}`);
+    }
+  }
+
+  // 创建战斗小组内存记录
+  if (!Memory.combatSquads) Memory.combatSquads = {};
+  Memory.combatSquads[squadId] = {
+    id: squadId,
+    members: {
+      tank: roleGroups.tank.find(c => c.memory.squadId === squadId)?.name || '',
+      warrior: roleGroups.warrior.find(c => c.memory.squadId === squadId)?.name || '',
+      archer: roleGroups.archer.find(c => c.memory.squadId === squadId)?.name || '',
+      healer: roleGroups.healer.find(c => c.memory.squadId === squadId)?.name || ''
+    },
+    status: 'ready',
+    formationTime: Game.time
+  };
+
+  console.log(`🎉 战斗编组 ${squadId} 创建成功！`);
+  console.log(`📊 编组状态: 准备就绪`);
+}
+
+// 手动补充编组
+export function refillSquad(squadId: string): void {
+  if (!Memory.combatSquads || !Memory.combatSquads[squadId]) {
+    console.log(`❌ 编组 ${squadId} 不存在`);
+    return;
+  }
+
+  const squad = Memory.combatSquads[squadId];
+  console.log(`🔧 补充编组: ${squadId}`);
+
+  // 检查哪些角色缺失
+  const missingRoles: string[] = [];
+  for (const [role, memberName] of Object.entries(squad.members)) {
+    if (!memberName || !Game.creeps[memberName]) {
+      missingRoles.push(role);
+    }
+  }
+
+  if (missingRoles.length === 0) {
+    console.log(`✅ 编组 ${squadId} 人员完整，无需补充`);
+    return;
+  }
+
+  console.log(`📋 需要补充的角色: ${missingRoles.join(', ')}`);
+
+  // 查找可用的战斗单位来补充
+  for (const role of missingRoles) {
+         const availableCreeps = Object.values(Game.creeps).filter(creep =>
+       creep.memory.role === role &&
+       !creep.memory.squadId &&
+       creep.room.name === Game.rooms[squad.id.split('_')[0] || '']?.name
+     );
+
+    if (availableCreeps.length > 0) {
+      const creep = availableCreeps[0];
+      creep.memory.squadId = squadId;
+      squad.members[role as keyof typeof squad.members] = creep.name;
+      console.log(`✅ 补充 ${role}: ${creep.name}`);
+    } else {
+      console.log(`❌ 无法找到可用的 ${role} 角色`);
+    }
+  }
+
+  // 检查编组是否完整
+  const isComplete = Object.values(squad.members).every(memberName =>
+    memberName && Game.creeps[memberName]
+  );
+
+  if (isComplete) {
+    squad.status = 'ready';
+    console.log(`🎉 编组 ${squadId} 补充完成，状态: 准备就绪`);
+  } else {
+    squad.status = 'forming';
+    console.log(`⚠️ 编组 ${squadId} 仍有缺失，状态: 组建中`);
   }
 }
 
@@ -214,11 +386,23 @@ export function forceRetreat(): void {
   console.log(`✅ 强制撤退 ${retreatedCount} 个攻击任务`);
 }
 
+// 强制更新编组状态
+export function forceUpdateSquad(squadId: string): void {
+  if (typeof global.forceUpdateSquadStatus === 'function') {
+    global.forceUpdateSquadStatus(squadId);
+  } else {
+    console.log(`❌ 编组状态更新系统未加载`);
+  }
+}
+
 // 显示帮助信息
 export function help(): void {
   console.log('🎮 攻击系统控制台命令:');
   console.log('  attack(roomName, targetRoom) - 创建攻击任务');
   console.log('  forceAttack(roomName, targetRoom) - 强制攻击（忽略力量限制）');
+  console.log('  createSquad(roomName) - 手动创建战斗编组');
+  console.log('  refillSquad(squadId) - 手动补充编组人员');
+  console.log('  forceUpdateSquad(squadId) - 强制更新编组状态为ready');
   console.log('  showAttackTasks() - 显示攻击任务状态');
   console.log('  cancelAttack(taskId) - 取消攻击任务');
   console.log('  showCombatSquads() - 显示战斗小组状态');
@@ -229,6 +413,10 @@ export function help(): void {
   console.log('💡 使用示例:');
   console.log('  attack("W1N1", "W1N2") - 从W1N1攻击W1N2');
   console.log('  forceAttack("W1N1", "W1N2") - 强制攻击（即使力量不足）');
+  console.log('  createSquad("W1N1") - 在W1N1手动创建战斗编组');
+  console.log('  refillSquad("squad_123") - 补充编组squad_123的人员');
+  console.log('  forceUpdateSquad("squad_123") - 强制更新编组状态');
   console.log('  showAttackTasks() - 查看所有攻击任务');
+  console.log('  showCombatSquads() - 查看所有战斗编组');
   console.log('  assessRoom("W1N2") - 评估W1N2的攻击难度');
 }

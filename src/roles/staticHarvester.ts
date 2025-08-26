@@ -182,7 +182,6 @@ export class RoleStaticHarvester {
         return false;
       } else {
         // 移动失败，可能是路径问题
-        console.log(`静态矿工 ${creep.name} 移动失败，错误码: ${result}`);
         return false;
       }
     }

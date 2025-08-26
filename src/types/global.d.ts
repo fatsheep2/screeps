@@ -45,6 +45,10 @@ declare global {
     target?: string; // 目标敌人或位置
     formationTime: number;
     attackTaskId?: string; // 关联的攻击任务ID
+    formationComplete?: boolean; // 列队是否完成
+    formationCenter?: { x: number; y: number }; // 列队中心位置
+    moveTarget?: { x: number; y: number }; // 编组移动目标
+    lastMoveTime?: number; // 最后移动时间
   }
 
   // 攻击任务内存结构

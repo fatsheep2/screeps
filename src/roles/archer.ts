@@ -1,8 +1,14 @@
 // 弓箭手角色逻辑
 export class RoleArcher {
   static run(creep: Creep): void {
+    // 检查是否有攻击任务
+    if (creep.memory.attackTaskId && creep.memory.attackTarget) {
+      this.handleAttackTask(creep);
+      return;
+    }
+
     // 检查生命值，如果太低则撤退
-    if (creep.hits < creep.hitsMax * 0.6) {
+    if (creep.hits < creep.hitsMax * 0.5) {
       this.retreat(creep);
       return;
     }
@@ -14,9 +20,81 @@ export class RoleArcher {
       // 远程攻击敌人
       this.rangedAttack(creep, target);
     } else {
-      // 没有敌人时，移动到安全位置
-      this.reposition(creep);
+      // 没有敌人时，移动到指定位置或巡逻
+      this.patrol(creep);
     }
+  }
+
+  // 处理攻击任务
+  private static handleAttackTask(creep: Creep): void {
+    const targetRoom = creep.memory.attackTarget;
+    if (!targetRoom) return;
+
+    // 如果不在目标房间，移动到目标房间
+    if (creep.room.name !== targetRoom) {
+      this.moveToTargetRoom(creep, targetRoom);
+      return;
+    }
+
+    // 在目标房间中寻找敌人
+    const target = this.findTarget(creep);
+    if (target) {
+      this.rangedAttack(creep, target);
+      creep.memory.working = true;
+    } else {
+      // 没有敌人，等待或搜索
+      creep.memory.working = false;
+      this.searchForEnemies(creep);
+    }
+  }
+
+  // 移动到目标房间
+  private static moveToTargetRoom(creep: Creep, targetRoom: string): void {
+    // 如果已经在目标房间，直接返回
+    if (creep.room.name === targetRoom) {
+      return;
+    }
+
+    // 使用 exit 移动到目标房间
+    const exits = creep.room.findExitTo(targetRoom);
+    if (exits === ERR_NO_PATH) {
+      console.log(`弓箭手 ${creep.name} 无法找到到房间 ${targetRoom} 的路径`);
+      return;
+    }
+
+    if (exits === ERR_INVALID_ARGS) {
+      console.log(`弓箭手 ${creep.name} 目标房间 ${targetRoom} 无效`);
+      return;
+    }
+
+    // 移动到出口
+    const exit = creep.pos.findClosestByRange(exits);
+    if (exit) {
+      creep.moveTo(exit, {
+        visualizePathStyle: { stroke: '#00ff00' }
+      });
+      creep.say('🚶 移动');
+    }
+  }
+
+  // 搜索敌人
+  private static searchForEnemies(creep: Creep): void {
+    // 在房间中搜索敌人
+    const hostiles = creep.room.find(FIND_HOSTILE_CREEPS);
+    if (hostiles.length > 0) {
+      creep.say('🎯 发现敌人');
+      return;
+    }
+
+    // 搜索敌对建筑
+    const hostileStructures = creep.room.find(FIND_HOSTILE_STRUCTURES);
+    if (hostileStructures.length > 0) {
+      creep.say('🏗️ 发现建筑');
+      return;
+    }
+
+    // 没有发现敌人，在房间中巡逻
+    this.patrol(creep);
   }
 
   // 寻找攻击目标
@@ -106,8 +184,8 @@ export class RoleArcher {
     creep.moveTo(target);
   }
 
-  // 重新定位
-  private static reposition(creep: Creep): void {
+  // 巡逻逻辑
+  private static patrol(creep: Creep): void {
     // 移动到房间中心的安全位置
     const centerX = 25;
     const centerY = 25;
@@ -132,6 +210,8 @@ export class RoleArcher {
       creep.moveTo(patrolPos);
     }
   }
+
+
 
   // 撤退逻辑
   private static retreat(creep: Creep): void {

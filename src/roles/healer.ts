@@ -1,8 +1,14 @@
 // 牧师/治疗者角色逻辑
 export class RoleHealer {
   static run(creep: Creep): void {
+    // 检查是否有攻击任务
+    if (creep.memory.attackTaskId && creep.memory.attackTarget) {
+      this.handleAttackTask(creep);
+      return;
+    }
+
     // 检查生命值，如果太低则撤退
-    if (creep.hits < creep.hitsMax * 0.7) {
+    if (creep.hits < creep.hitsMax * 0.5) {
       this.retreat(creep);
       return;
     }
@@ -14,10 +20,64 @@ export class RoleHealer {
       // 治疗友军
       this.heal(creep, target);
     } else {
-      // 没有需要治疗的目标时，跟随战斗小组或巡逻
-      this.followOrPatrol(creep);
+      // 没有需要治疗的友军时，移动到指定位置或巡逻
+      this.patrol(creep);
     }
   }
+
+  // 处理攻击任务
+  private static handleAttackTask(creep: Creep): void {
+    const targetRoom = creep.memory.attackTarget;
+    if (!targetRoom) return;
+
+    // 如果不在目标房间，移动到目标房间
+    if (creep.room.name !== targetRoom) {
+      this.moveToTargetRoom(creep, targetRoom);
+      return;
+    }
+
+    // 在目标房间中寻找需要治疗的友军
+    const target = this.findHealTarget(creep);
+    if (target) {
+      this.heal(creep, target);
+      creep.memory.working = true;
+    } else {
+      // 没有需要治疗的友军，跟随编组或等待
+      creep.memory.working = false;
+      this.followSquad(creep);
+    }
+  }
+
+  // 移动到目标房间
+  private static moveToTargetRoom(creep: Creep, targetRoom: string): void {
+    // 如果已经在目标房间，直接返回
+    if (creep.room.name === targetRoom) {
+      return;
+    }
+
+    // 使用 exit 移动到目标房间
+    const exits = creep.room.findExitTo(targetRoom);
+    if (exits === ERR_NO_PATH) {
+      console.log(`牧师 ${creep.name} 攻击任务中，移动到目标房间`);
+      return;
+    }
+
+    if (exits === ERR_INVALID_ARGS) {
+      console.log(`牧师 ${creep.name} 目标房间 ${targetRoom} 无效`);
+      return;
+    }
+
+    // 移动到出口
+    const exit = creep.pos.findClosestByRange(exits);
+    if (exit) {
+      creep.moveTo(exit, {
+        visualizePathStyle: { stroke: '#ff00ff' }
+      });
+      creep.say('🚶 移动');
+    }
+  }
+
+
 
   // 寻找治疗目标
   private static findHealTarget(creep: Creep): Creep | null {
@@ -54,50 +114,9 @@ export class RoleHealer {
     }
   }
 
-  // 跟随战斗小组或巡逻
-  private static followOrPatrol(creep: Creep): void {
-    // 如果有战斗小组ID，尝试跟随小组
-    if (creep.memory.squadId && Memory.combatSquads && Memory.combatSquads[creep.memory.squadId]) {
-      const squad = Memory.combatSquads[creep.memory.squadId];
 
-      // 跟随坦克或战士
-      const followTarget = Game.creeps[squad.members.tank] || Game.creeps[squad.members.warrior];
 
-      if (followTarget && followTarget.room.name === creep.room.name) {
-        // 保持适当的跟随距离（2-3格）
-        const distance = creep.pos.getRangeTo(followTarget);
-        if (distance > 3) {
-          creep.moveTo(followTarget);
-        } else if (distance < 2) {
-          // 太近了，稍微远离
-          this.keepDistance(creep, followTarget);
-        }
-        return;
-      }
-    }
 
-    // 没有跟随目标时，巡逻
-    this.patrol(creep);
-  }
-
-  // 保持距离
-  private static keepDistance(creep: Creep, target: Creep): void {
-    // 计算远离目标的方向
-    const direction = this.getDirectionAwayFrom(creep.pos, target.pos);
-    const newPos = new RoomPosition(
-      creep.pos.x + direction.x,
-      creep.pos.y + direction.y,
-      creep.room.name
-    );
-
-    // 检查新位置是否有效
-    if (newPos.x >= 0 && newPos.x < 50 && newPos.y >= 0 && newPos.y < 50) {
-      const terrain = creep.room.lookForAt(LOOK_TERRAIN, newPos)[0];
-      if (terrain !== 'wall') {
-        creep.moveTo(newPos);
-      }
-    }
-  }
 
   // 巡逻逻辑
   private static patrol(creep: Creep): void {
@@ -139,6 +158,84 @@ export class RoleHealer {
     }
   }
 
+  // 跟随编组
+  private static followSquad(creep: Creep): void {
+    // 如果有战斗小组ID，尝试跟随小组
+    if (creep.memory.squadId && Memory.combatSquads && Memory.combatSquads[creep.memory.squadId]) {
+      const squad = Memory.combatSquads[creep.memory.squadId];
+
+      // 跟随坦克或战士
+      const followTarget = Game.creeps[squad.members.tank] || Game.creeps[squad.members.warrior];
+
+      if (followTarget && followTarget.room.name === creep.room.name) {
+        // 保持适当的跟随距离（2-3格）
+        const distance = creep.pos.getRangeTo(followTarget);
+        if (distance > 3) {
+          creep.moveTo(followTarget, {
+            visualizePathStyle: { stroke: '#ff00ff' }
+          });
+          creep.say('👥 跟随');
+        } else if (distance < 2) {
+          // 太近了，稍微远离
+          this.keepDistance(creep, followTarget);
+        }
+        return;
+      }
+    }
+
+    // 没有跟随目标时，在安全位置等待
+    this.waitInSafePosition(creep);
+  }
+
+  // 保持距离
+  private static keepDistance(creep: Creep, target: Creep): void {
+    // 计算远离目标的方向
+    const direction = this.getDirectionAwayFrom(creep.pos, target.pos);
+    const newPos = new RoomPosition(
+      creep.pos.x + direction.x,
+      creep.pos.y + direction.y,
+      creep.room.name
+    );
+
+    // 检查新位置是否有效
+    if (newPos.x >= 0 && newPos.x < 50 && newPos.y >= 0 && newPos.y < 50) {
+      const terrain = creep.room.lookForAt(LOOK_TERRAIN, newPos)[0];
+      if (terrain !== 'wall') {
+        creep.moveTo(newPos, {
+          visualizePathStyle: { stroke: '#ff00ff' }
+        });
+      }
+    }
+  }
+
+  // 在安全位置等待
+  private static waitInSafePosition(creep: Creep): void {
+    // 寻找房间中的安全位置（远离敌人）
+    const hostiles = creep.room.find(FIND_HOSTILE_CREEPS);
+    if (hostiles.length > 0) {
+      // 有敌人时，移动到远离敌人的位置
+      const closestHostile = creep.pos.findClosestByRange(hostiles);
+      if (closestHostile) {
+        const direction = this.getDirectionAwayFrom(creep.pos, closestHostile.pos);
+        const safePos = new RoomPosition(
+          creep.pos.x + direction.x * 3,
+          creep.pos.y + direction.y * 3,
+          creep.room.name
+        );
+
+        if (safePos.x >= 0 && safePos.x < 50 && safePos.y >= 0 && safePos.y < 50) {
+          creep.moveTo(safePos, {
+            visualizePathStyle: { stroke: '#ff00ff' }
+          });
+          creep.say('🛡️ 躲避');
+        }
+      }
+    } else {
+      // 没有敌人时，在房间中心等待
+      this.patrol(creep);
+    }
+  }
+
   // 获取远离目标的方向
   private static getDirectionAwayFrom(from: RoomPosition, to: RoomPosition): { x: number, y: number } {
     const dx = from.x - to.x;
@@ -148,6 +245,7 @@ export class RoleHealer {
       y: Math.sign(dy) || (Math.random() > 0.5 ? 1 : -1)
     };
   }
+
 
   // 检查是否需要紧急治疗（预留功能）
   // private static needsEmergencyHeal(creep: Creep): boolean {

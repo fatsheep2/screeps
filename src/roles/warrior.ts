@@ -50,6 +50,11 @@ export class RoleWarrior {
 
   // 移动到目标房间
   private static moveToTargetRoom(creep: Creep, targetRoom: string): void {
+    // 如果已经在目标房间，直接返回
+    if (creep.room.name === targetRoom) {
+      return;
+    }
+
     // 使用 exit 移动到目标房间
     const exits = creep.room.findExitTo(targetRoom);
     if (exits === ERR_NO_PATH) {
@@ -65,9 +70,64 @@ export class RoleWarrior {
     // 移动到出口
     const exit = creep.pos.findClosestByRange(exits);
     if (exit) {
-      creep.moveTo(exit);
-      creep.say('🚶 移动');
+      const distanceToExit = creep.pos.getRangeTo(exit);
+
+      if (distanceToExit === 0) {
+        // 已经在出口位置，尝试直接移动进入目标房间
+        const direction = this.getDirectionToTargetRoom(creep.room.name, targetRoom);
+        if (direction !== null) {
+          const result = creep.move(direction);
+          if (result === OK) {
+            creep.say('🚪 进入');
+            return;
+          }
+        }
+      } else {
+        // 移动到出口位置
+        creep.moveTo(exit, {
+          visualizePathStyle: { stroke: '#ff0000' }
+        });
+        creep.say('🚶 移动');
+      }
     }
+  }
+
+  // 计算到目标房间的移动方向
+  private static getDirectionToTargetRoom(currentRoom: string, targetRoom: string): DirectionConstant | null {
+    // 解析房间名称格式：W2N5 -> W3N5
+    const currentMatch = currentRoom.match(/^([WE])(\d+)([NS])(\d+)$/);
+    const targetMatch = targetRoom.match(/^([WE])(\d+)([NS])(\d+)$/);
+
+    if (!currentMatch || !targetMatch) return null;
+
+    const [, currentW, currentX, currentN, currentY] = currentMatch;
+    const [, targetW, targetX, targetN, targetY] = targetMatch;
+
+    // 计算X方向差异
+    if (currentW === targetW && currentX !== targetX) {
+      const xDiff = parseInt(targetX) - parseInt(currentX);
+      if (currentW === 'W') {
+        // 向西的房间，X增加表示向东移动
+        return xDiff > 0 ? RIGHT : LEFT;
+      } else {
+        // 向东的房间，X增加表示向西移动
+        return xDiff > 0 ? LEFT : RIGHT;
+      }
+    }
+
+    // 计算Y方向差异
+    if (currentN === targetN && currentY !== targetY) {
+      const yDiff = parseInt(targetY) - parseInt(currentY);
+      if (currentN === 'N') {
+        // 向北的房间，Y增加表示向南移动
+        return yDiff > 0 ? BOTTOM : TOP;
+      } else {
+        // 向南的房间，Y增加表示向北移动
+        return yDiff > 0 ? TOP : BOTTOM;
+      }
+    }
+
+    return null;
   }
 
   // 搜索敌人

@@ -148,13 +148,104 @@ export function updateCombatSquads(_room: Room): void {
 export function getRoomCombatSquads(room: Room): CombatSquad[] {
   if (!Memory.combatSquads) return [];
 
-  return Object.values(Memory.combatSquads).filter(squad => {
-    // 检查小组成员是否都在这个房间
-    return Object.values(squad.members).every(memberName => {
-      const creep = Game.creeps[memberName];
-      return creep && creep.room.name === room.name;
+  console.log(`[编组管理] 检查房间 ${room.name} 的可用战斗编组，总编组数: ${Object.keys(Memory.combatSquads).length}`);
+
+  const availableSquads = Object.values(Memory.combatSquads).filter(squad => {
+    console.log(`[编组管理] 检查编组 ${squad.id}: 状态=${squad.status}, 成员数=${Object.keys(squad.members).length}`);
+
+    // 检查编组状态是否为ready或forming（允许使用forming状态的编组）
+    if (squad.status !== 'ready' && squad.status !== 'forming') {
+      console.log(`[编组管理] 编组 ${squad.id} 状态为 ${squad.status}，不可用`);
+      return false;
+    }
+
+    // 检查编组是否有足够的存活成员
+    const aliveMembers = Object.values(squad.members).filter(memberName => {
+      if (!memberName) return false;
+      const member = Game.creeps[memberName];
+      const alive = member && member.hits > 0;
+      console.log(`[编组管理] 成员 ${memberName}: ${alive ? '存活' : '死亡/不存在'} (${member?.room.name || 'null'})`);
+      return alive;
     });
+
+    // 至少需要3个成员存活
+    if (aliveMembers.length < 3) {
+      console.log(`[编组管理] 编组 ${squad.id} 只有 ${aliveMembers.length} 个存活成员，不可用`);
+      return false;
+    }
+
+    // 检查是否有成员在指定房间（作为编组的"主场"）
+    const hasMemberInRoom = aliveMembers.some(memberName => {
+      const creep = Game.creeps[memberName];
+      const inRoom = creep && creep.room.name === room.name;
+      console.log(`[编组管理] 成员 ${memberName}: ${inRoom ? '在房间' : '不在房间'} (${creep?.room.name || 'null'})`);
+      return inRoom;
+    });
+
+    // 检查是否有活跃的攻击任务
+    const hasActiveAttackTask = Memory.attackTasks &&
+      Object.values(Memory.attackTasks).some(task =>
+        task.squads.includes(squad.id) &&
+        (task.status === 'moving' || task.status === 'engaging')
+      );
+
+    console.log(`[编组管理] 编组 ${squad.id}: 有成员在房间=${hasMemberInRoom}, 有活跃任务=${hasActiveAttackTask}`);
+
+    // 如果编组中有成员在指定房间，或者编组状态为ready且没有其他任务，则可用
+    const isAvailable = hasMemberInRoom || (!hasActiveAttackTask);
+
+    if (isAvailable) {
+      console.log(`[编组管理] 编组 ${squad.id} 可用，状态: ${squad.status}，成员数: ${aliveMembers.length}`);
+    }
+
+    return isAvailable;
   });
+
+  console.log(`[编组管理] 房间 ${room.name} 找到 ${availableSquads.length} 个可用编组`);
+  return availableSquads;
+}
+
+// 手动更新编组状态
+export function forceUpdateSquadStatus(squadId: string): void {
+  if (!Memory.combatSquads || !Memory.combatSquads[squadId]) {
+    console.log(`编组 ${squadId} 不存在`);
+    return;
+  }
+
+  const squad = Memory.combatSquads[squadId];
+  const oldStatus = squad.status;
+
+  console.log(`[编组管理] 强制更新编组 ${squadId} 状态: ${oldStatus} -> ready`);
+  console.log(`[编组管理] 编组 ${squadId} 成员: ${JSON.stringify(squad.members)}`);
+
+  // 检查小组成员是否都存活
+  const allMembersAlive = Object.values(squad.members).every(memberName => {
+    if (!memberName) return false;
+    const member = Game.creeps[memberName];
+    const alive = member && member.hits > 0;
+    console.log(`[编组管理] 成员 ${memberName}: ${alive ? '存活' : '死亡/不存在'} (${member?.hits || 0}/${member?.hitsMax || 0})`);
+    return alive;
+  });
+
+  if (!allMembersAlive) {
+    console.log(`[编组管理] 编组 ${squadId} 有成员死亡，无法更新状态`);
+    return;
+  }
+
+  // 强制更新状态为ready
+  if (squad.status === 'forming') {
+    squad.status = 'ready';
+    console.log(`[编组管理] 编组 ${squadId} 状态已强制更新为 ready`);
+
+    // 重置编队状态
+    (squad as any).formationComplete = false;
+    (squad as any).formationCenter = null;
+    (squad as any).moveTarget = null;
+    (squad as any).lastMoveTime = null;
+    console.log(`[编组管理] 重置编组 ${squadId} 编队状态`);
+  } else {
+    console.log(`[编组管理] 编组 ${squadId} 当前状态为 ${squad.status}，无需更新`);
+  }
 }
 
 // 检查房间是否需要战斗单位

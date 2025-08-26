@@ -5,7 +5,8 @@ import { initializeRoomMemory, cleanupDeadCreeps, updateRoomStatus, manageRoom }
 import * as ConsoleCommands from "./utils/consoleCommands";
 
 // 导入攻击管理器函数
-import { manualAttack, assessRoomForAttack } from "./managers/attackManager";
+import { manualAttack, assessRoomForAttack, executeAttackTask } from "./managers/attackManager";
+import { getRoomCombatSquads, forceUpdateSquadStatus } from "./managers/combatManager";
 
 // 导入攻击评估配置
 import { ATTACK_ASSESSMENT_CONFIG } from "./config/combatConfig";
@@ -20,10 +21,16 @@ declare global {
   var forceRetreat: typeof ConsoleCommands.forceRetreat;
   var help: typeof ConsoleCommands.help;
   var forceAttack: typeof ConsoleCommands.forceAttack;
+  var createSquad: typeof ConsoleCommands.createSquad;
+  var refillSquad: typeof ConsoleCommands.refillSquad;
+  var forceUpdateSquad: typeof ConsoleCommands.forceUpdateSquad;
 
   // 暴露攻击管理器函数
   var manualAttack: (sourceRoom: Room, targetRoom: string) => string | null;
   var assessRoomForAttack: (roomName: string) => any;
+  var getRoomCombatSquads: (room: Room) => any[];
+  var executeAttackTask: (taskId: string) => void;
+  var forceUpdateSquadStatus: (squadId: string) => void;
 
   // 暴露攻击评估配置
   var ATTACK_ASSESSMENT_CONFIG: any;
@@ -38,10 +45,16 @@ global.assessRoom = ConsoleCommands.assessRoom;
 global.forceRetreat = ConsoleCommands.forceRetreat;
 global.help = ConsoleCommands.help;
 global.forceAttack = ConsoleCommands.forceAttack;
+global.createSquad = ConsoleCommands.createSquad;
+global.refillSquad = ConsoleCommands.refillSquad;
+global.forceUpdateSquad = ConsoleCommands.forceUpdateSquad;
 
 // 暴露攻击管理器函数到全局
 global.manualAttack = manualAttack;
 global.assessRoomForAttack = assessRoomForAttack;
+global.getRoomCombatSquads = getRoomCombatSquads;
+global.executeAttackTask = executeAttackTask;
+global.forceUpdateSquadStatus = forceUpdateSquadStatus;
 
 // 暴露攻击评估配置到全局
 global.ATTACK_ASSESSMENT_CONFIG = ATTACK_ASSESSMENT_CONFIG;

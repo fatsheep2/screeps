@@ -202,26 +202,46 @@ function coordinateSquadsMovement(task: AttackTask): void {
 export function updateAttackTasks(): void {
   if (!Memory.attackTasks) return;
 
+  console.log(`[攻击管理] 开始更新攻击任务，总任务数: ${Object.keys(Memory.attackTasks).length}`);
+
   for (const taskId in Memory.attackTasks) {
     const task = Memory.attackTasks![taskId];
-    if (!task) continue;
+    console.log(`[攻击管理] 更新任务 ${taskId}: 状态=${task.status}, 目标房间=${task.targetRoom}, 编组数=${task.squads.length}`);
 
-    // 检查任务是否超时
-    if (Game.time - task.createdAt > 1000) { // 1000 tick超时
-      task.status = 'failed';
-      task.completedAt = Game.time;
-      console.log(`攻击任务 ${taskId} 超时失败`);
-      continue;
-    }
+    switch (task.status) {
+      case 'planning':
+        console.log(`[攻击管理] 任务 ${taskId} 处于规划状态，开始协调编组移动`);
+        // 规划阶段：协调编组移动到目标房间
+        coordinateSquadsMovement(task);
+        // 自动转换为移动状态
+        task.status = 'moving';
+        console.log(`[攻击管理] 任务 ${taskId} 状态更新为: moving`);
+        break;
 
-    // 检查任务完成状态
-    if (task.status === 'moving' || task.status === 'engaging') {
-      checkTaskProgress(task);
+      case 'moving':
+        console.log(`[攻击管理] 任务 ${taskId} 处于移动状态，检查进度`);
+        // 移动阶段：检查编组是否到达目标房间
+        checkTaskProgress(task);
+        break;
+
+      case 'engaging':
+        console.log(`[攻击管理] 任务 ${taskId} 处于交战状态，执行攻击`);
+        // 交战阶段：执行攻击逻辑
+        executeAttackTask(taskId);
+        break;
+
+              case 'retreating':
+          console.log(`[攻击管理] 任务 ${taskId} 处于撤退状态`);
+          // 撤退阶段：编组返回源房间
+          break;
+
+        case 'completed':
+        case 'failed':
+          console.log(`[攻击管理] 任务 ${taskId} 已完成/失败，清理任务`);
+          // 任务完成或失败，清理
+          break;
     }
   }
-
-  // 清理已完成的任务
-  cleanupCompletedTasks();
 }
 
 // 检查任务进度
@@ -230,6 +250,7 @@ function checkTaskProgress(task: AttackTask): void {
 
   let allSquadsInTargetRoom = true;
   let anySquadEngaging = false;
+  let anySquadNearTargetRoom = false;
 
   for (const squadId of task.squads) {
     const squad = Memory.combatSquads[squadId];
@@ -243,6 +264,20 @@ function checkTaskProgress(task: AttackTask): void {
 
     if (!membersInTargetRoom) {
       allSquadsInTargetRoom = false;
+
+      // 检查是否有成员接近目标房间（在相邻房间）
+      const membersNearTargetRoom = Object.values(squad.members).some(memberName => {
+        const member = Game.creeps[memberName];
+        if (!member) return false;
+
+        // 检查是否在相邻房间
+        const adjacentRooms = getAdjacentRooms(member.room.name);
+        return adjacentRooms.includes(task.targetRoom);
+      });
+
+      if (membersNearTargetRoom) {
+        anySquadNearTargetRoom = true;
+      }
     } else {
       // 检查是否有小组成员正在战斗
       const hasEngagement = Object.values(squad.members).some(memberName => {
@@ -257,6 +292,9 @@ function checkTaskProgress(task: AttackTask): void {
   if (allSquadsInTargetRoom && task.status === 'moving') {
     task.status = 'engaging';
     console.log(`攻击任务 ${task.id} 进入战斗阶段`);
+  } else if (anySquadNearTargetRoom && task.status === 'moving') {
+    // 如果有编组接近目标房间，继续移动状态
+    console.log(`攻击任务 ${task.id} 编组接近目标房间，继续移动`);
   }
 
   if (anySquadEngaging && task.status === 'engaging') {
@@ -266,6 +304,34 @@ function checkTaskProgress(task: AttackTask): void {
       console.log(`攻击任务 ${task.id} 开始撤退`);
     }
   }
+}
+
+// 获取相邻房间列表
+function getAdjacentRooms(roomName: string): string[] {
+  const adjacentRooms: string[] = [];
+
+  // 解析房间名称格式（如 W2N5）
+  const match = roomName.match(/^([WE])(\d+)([NS])(\d+)$/);
+  if (!match) return adjacentRooms;
+
+  const [, direction, x, ns, y] = match;
+  const xNum = parseInt(x);
+  const yNum = parseInt(y);
+
+  // 计算相邻房间
+  if (direction === 'W') {
+    adjacentRooms.push(`E${xNum - 1}${ns}${yNum}`);
+  } else {
+    adjacentRooms.push(`W${xNum + 1}${ns}${yNum}`);
+  }
+
+  if (ns === 'N') {
+    adjacentRooms.push(`${direction}${xNum}S${yNum - 1}`);
+  } else {
+    adjacentRooms.push(`${direction}${xNum}N${yNum + 1}`);
+  }
+
+  return adjacentRooms;
 }
 
 // 判断是否应该撤退
@@ -297,49 +363,7 @@ function shouldRetreat(task: AttackTask): boolean {
   return false;
 }
 
-// 清理已完成的任务
-function cleanupCompletedTasks(): void {
-  if (!Memory.attackTasks) return;
 
-  const completedTaskIds = Object.keys(Memory.attackTasks).filter(taskId => {
-    const task = Memory.attackTasks![taskId];
-    return task && (task.status === 'completed' || task.status === 'failed');
-  });
-
-  for (const taskId of completedTaskIds) {
-    const task = Memory.attackTasks![taskId];
-    if (!task) continue;
-
-    // 清理战斗小组的任务关联
-    if (Memory.combatSquads) {
-      for (const squadId of task.squads) {
-        const squad = Memory.combatSquads[squadId];
-        if (squad) {
-          delete squad.attackTaskId;
-          squad.status = 'ready';
-        }
-      }
-    }
-
-    // 清理Creep的任务关联
-    for (const squadId of task.squads) {
-      if (Memory.combatSquads && Memory.combatSquads[squadId]) {
-        const squad = Memory.combatSquads[squadId];
-        for (const memberName of Object.values(squad.members)) {
-          const member = Game.creeps[memberName];
-          if (member) {
-            delete member.memory.attackTarget;
-            delete member.memory.attackTaskId;
-          }
-        }
-      }
-    }
-
-    // 删除任务
-    delete Memory.attackTasks![taskId];
-    console.log(`清理攻击任务 ${taskId}`);
-  }
-}
 
 // 获取房间的攻击任务
 export function getRoomAttackTasks(roomName: string): AttackTask[] {
