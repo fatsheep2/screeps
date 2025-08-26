@@ -41,9 +41,18 @@ export class RoleUpgrader {
         filter: (c) => c.memory.role === 'carrier'
       });
 
-      if (carriers.length === 0) {
-        // 没有搬运工，等待基础工种建立
-        creep.say('⏳ 等待搬运工');
+      // 检查房间中是否有静态矿工（StaticHarvester）
+      const staticHarvesters = creep.room.find(FIND_MY_CREEPS, {
+        filter: (c) => c.memory.role === 'staticHarvester'
+      });
+
+      if (carriers.length === 0 || staticHarvesters.length === 0) {
+        // 没有搬运工或静态矿工，等待基础工种建立
+        if (carriers.length === 0) {
+          creep.say('⏳ 等待搬运工');
+        } else {
+          creep.say('⏳ 等待静态矿工');
+        }
         return;
       }
 

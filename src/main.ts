@@ -57,7 +57,6 @@ const BODY_EXTENSIONS = {
 };
 
 export const loop = ErrorMapper.wrapLoop(() => {
-  console.log(`=== Tick ${Game.time} ===`);
 
   // 初始化全局内存
   if (!Memory.rooms) {
@@ -65,7 +64,6 @@ export const loop = ErrorMapper.wrapLoop(() => {
   }
 
   // 调试信息：显示所有房间
-  console.log(`总房间数量: ${Object.keys(Game.rooms).length}`);
   for (const roomName in Game.rooms) {
     const room = Game.rooms[roomName];
   }
@@ -87,7 +85,6 @@ export const loop = ErrorMapper.wrapLoop(() => {
       continue;
     }
 
-    console.log(`处理我的房间: ${roomName}`);
 
 
 
@@ -104,8 +101,11 @@ export const loop = ErrorMapper.wrapLoop(() => {
       console.log(`初始化房间 ${roomName} 的内存`);
     }
 
-    // 更新采矿点信息
-    updateMiningSpots(room);
+    // 更新采矿点信息（每100tick刷新一次）
+    if (Game.time % 1 === 0) {
+      updateMiningSpots(room);
+    }
+
 
     // 更新建筑布局建议
     updateBuildingLayout(room);
@@ -128,57 +128,63 @@ export const loop = ErrorMapper.wrapLoop(() => {
 function updateMiningSpots(room: Room): void {
   const sources = room.find(FIND_SOURCES);
   const miningSpots: string[] = [];
-  let totalAvailableSpots = 0;
 
-  // 为每个资源点找到所有可用的位置（8格范围内）
+  console.log(`房间 ${room.name} 开始更新采矿点，找到 ${sources.length} 个资源点`);
+
+  // 直接记录资源点的位置
   for (const source of sources) {
-    const positions = [];
+    const pos = source.pos;
+    miningSpots.push(`${pos.x},${pos.y}`);
+    console.log(`添加资源点 (${pos.x},${pos.y})`);
+  }
 
-    // 寻找资源点周围8格内的所有可用位置
-    for (let x = source.pos.x - 8; x <= source.pos.x + 8; x++) {
-      for (let y = source.pos.y - 8; y <= source.pos.y + 8; y++) {
-        if (x >= 0 && x < 50 && y >= 0 && y < 50) {
-          const pos = new RoomPosition(x, y, room.name);
+  // 存储采矿点信息
+  Memory.rooms[room.name].miningSpots = miningSpots;
 
-          // 检查位置是否在8格范围内且不是墙
-          if (pos.getRangeTo(source) <= 8) {
-            // 检查位置是否被占用
-            const creepsAtPos = room.lookForAt(LOOK_CREEPS, pos);
-            const structuresAtPos = room.lookForAt(LOOK_STRUCTURES, pos);
-            const constructionSitesAtPos = room.lookForAt(LOOK_CONSTRUCTION_SITES, pos);
+  console.log(`房间 ${room.name} 资源点更新完成，总共 ${miningSpots.length} 个资源点：${miningSpots.join(', ')}`);
+}
 
-            // 检查是否是墙
-            const isWall = structuresAtPos.some(s =>
-              s.structureType === STRUCTURE_WALL ||
-              s.structureType === STRUCTURE_RAMPART
-            );
+// 调试函数：检查特定位置的详细信息
+function debugPosition(room: Room, x: number, y: number): void {
+  const pos = new RoomPosition(x, y, room.name);
+  console.log(`=== 调试位置 (${x},${y}) ===`);
 
-            if (creepsAtPos.length === 0 &&
-                structuresAtPos.length === 0 &&
-                constructionSitesAtPos.length === 0 &&
-                !isWall) {
-              positions.push(pos);
-            }
-          }
-        }
-      }
-    }
+  // 检查地形
+  const terrainAtPos = room.lookForAt(LOOK_TERRAIN, pos);
+  console.log(`地形: ${terrainAtPos[0]}`);
 
-    // 计算这个矿点的可用位置数量
-    totalAvailableSpots += positions.length;
+  // 检查建筑
+  const structuresAtPos = room.lookForAt(LOOK_STRUCTURES, pos);
+  console.log(`建筑: ${structuresAtPos.length} 个`);
+  structuresAtPos.forEach(s => {
+    console.log(`  - ${s.structureType} (${s.pos.x},${s.pos.y})`);
+  });
 
-    if (positions.length > 0) {
-      // 选择最近的可用位置作为主要采矿点
-      const bestPos = positions.reduce((best, current) => {
-        return current.getRangeTo(source) < best.getRangeTo(source) ? current : best;
-      });
-      miningSpots.push(`${bestPos.x},${bestPos.y}`);
+  // 检查爬爬
+  const creepsAtPos = room.lookForAt(LOOK_CREEPS, pos);
+  console.log(`爬爬: ${creepsAtPos.length} 个`);
+  creepsAtPos.forEach(c => {
+    console.log(`  - ${c.name} (${c.memory.role})`);
+  });
+
+  // 检查建筑工地
+  const constructionSitesAtPos = room.lookForAt(LOOK_CONSTRUCTION_SITES, pos);
+  console.log(`建筑工地: ${constructionSitesAtPos.length} 个`);
+  constructionSitesAtPos.forEach(cs => {
+    console.log(`  - ${cs.structureType} (${cs.pos.x},${cs.pos.y})`);
+  });
+
+  // 检查距离最近的资源点
+  const sources = room.find(FIND_SOURCES);
+  if (sources.length > 0) {
+    const nearestSource = pos.findClosestByRange(sources);
+    if (nearestSource) {
+      const distance = pos.getRangeTo(nearestSource);
+      console.log(`距离最近资源点 (${nearestSource.pos.x},${nearestSource.pos.y}): ${distance} 格`);
     }
   }
 
-  // 存储采矿点信息和总可用空地数量
-  Memory.rooms[room.name].miningSpots = miningSpots;
-  Memory.rooms[room.name].totalAvailableSpots = totalAvailableSpots;
+  console.log(`=== 调试完成 ===`);
 }
 
 // 更新房间的建筑布局建议

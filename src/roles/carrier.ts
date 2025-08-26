@@ -97,29 +97,72 @@ export class RoleCarrier {
         target.room.name
       );
 
+      // 检查目标位置是否已经被其他矿工占用，或者位置本身不可用
+      const creepsAtTarget = targetPos.lookFor(LOOK_CREEPS);
+      const isTargetOccupied = creepsAtTarget.some(c => c.id !== target.id && c.memory.role === 'staticHarvester');
+
+      // 检查目标位置本身是否可用（没有建筑、不是地形墙、没有爬爬、没有建筑工地）
+      const structuresAtTarget = targetPos.lookFor(LOOK_STRUCTURES);
+      const terrainAtTarget = targetPos.lookFor(LOOK_TERRAIN);
+      const isTerrainWall = terrainAtTarget[0] === 'wall';
+      const constructionSitesAtTarget = targetPos.lookFor(LOOK_CONSTRUCTION_SITES);
+
+      const isTargetUnavailable = isTargetOccupied ||
+                                  isTerrainWall ||
+                                  structuresAtTarget.length > 0 ||
+                                  creepsAtTarget.length > 0 ||
+                                  constructionSitesAtTarget.length > 0;
+
+      if (isTargetUnavailable) {
+        // 目标位置不可用，寻找新位置
+        if (isTargetOccupied) {
+          console.log(`目标位置 (${targetPos.x},${targetPos.y}) 已被其他矿工占用，寻找新位置`);
+        } else if (isTerrainWall) {
+          console.log(`目标位置 (${targetPos.x},${targetPos.y}) 是地形墙，寻找新位置`);
+        } else if (structuresAtTarget.length > 0) {
+          console.log(`目标位置 (${targetPos.x},${targetPos.y}) 有建筑，寻找新位置`);
+        } else if (creepsAtTarget.length > 0) {
+          console.log(`目标位置 (${targetPos.x},${targetPos.y}) 有爬爬，寻找新位置`);
+        } else if (constructionSitesAtTarget.length > 0) {
+          console.log(`目标位置 (${targetPos.x},${targetPos.y}) 有建筑工地，寻找新位置`);
+        }
+
+        const availableMiningSpot = this.findAvailableMiningSpot(target);
+        if (availableMiningSpot) {
+          // 更新静态矿工的目标位置
+          target.memory.targetId = `${availableMiningSpot.x},${availableMiningSpot.y}`;
+          console.log(`矿工 ${target.name} 重新分配到新位置: (${availableMiningSpot.x},${availableMiningSpot.y})`);
+          // 更新目标位置
+          targetPos.x = availableMiningSpot.x;
+          targetPos.y = availableMiningSpot.y;
+          targetPos.roomName = availableMiningSpot.roomName;
+        } else {
+          // 没有可用位置，等待
+          creep.say('⏳ 等待位置');
+          console.log(`矿工 ${target.name} 没有可用位置，等待中`);
+          return;
+        }
+      }
+
       // 检查运输兵是否已经到达矿点附近（isNearTo）
       if (creep.pos.isNearTo(targetPos)) {
         // 已经到达矿点附近，执行交换位置
         creep.say('🔄 交换位置');
-        console.log(`运输兵 ${creep.name} 到达矿点附近，执行交换位置`);
+        console.log(`运输兵 ${creep.name} 到达目标位置 (${targetPos.x},${targetPos.y})，与矿工 ${target.name} 交换位置`);
 
         // 执行真正的交换位置
         const pullResult = creep.pull(target);
-        console.log(`运输兵 ${creep.name} 交换位置时pull结果: ${pullResult}`);
-
         if (pullResult == OK) {
-          console.log(`运输兵 ${creep.name} pull成功，开始交换位置`);
+          console.log(`运输兵 ${creep.name} 开始与矿工 ${target.name} 交换位置`);
 
           // 记录矿工的原位置
           const targetOriginalPos = target.pos;
 
           // 让矿工移动到运输兵位置（目标位置）
           const moveResult = target.move(creep);
-          console.log(`矿工 ${target.name} move结果: ${moveResult}`);
-
           if (moveResult == OK) {
             // 矿工成功移动，现在运输兵移动到矿工的原位置
-            console.log(`矿工 ${target.name} 移动到目标位置，运输兵移动到矿工原位置`);
+            console.log(`矿工 ${target.name} 移动到目标位置 (${targetPos.x},${targetPos.y})，运输兵移动到位置 (${targetOriginalPos.x},${targetOriginalPos.y})`);
             creep.moveTo(targetOriginalPos, { visualizePathStyle: { stroke: '#ff0000' } });
 
             // 等待一轮，让位置交换完成
@@ -127,13 +170,9 @@ export class RoleCarrier {
           } else {
             // 矿工移动失败，继续协助
             creep.say('⚠️ 移动失败');
-            console.log(`矿工 ${target.name} 移动失败，结果: ${moveResult}，继续协助`);
+            console.log(`矿工 ${target.name} 移动失败，结果: ${moveResult}`);
           }
         } else if (pullResult == ERR_NOT_IN_RANGE) {
-          console.log(`运输兵 ${creep.name} pull失败，不在范围内，移动到矿工附近`);
-          creep.moveTo(target, { visualizePathStyle: { stroke: '#00ff00' } });
-        } else {
-          console.log(`运输兵 ${creep.name} pull其他错误: ${pullResult}，移动到矿工附近`);
           creep.moveTo(target, { visualizePathStyle: { stroke: '#00ff00' } });
         }
         return;
@@ -141,12 +180,12 @@ export class RoleCarrier {
 
       // 还没到达矿点附近，走一步矿工跟一步
       const distanceToTarget = creep.pos.getRangeTo(targetPos);
-      creep.say(`🚶 前往目标 距离: ${distanceToTarget}格`);
-      console.log(`运输兵 ${creep.name} 协助矿工 ${target.name}，距离目标: ${distanceToTarget}格，距离矿工: ${creep.pos.getRangeTo(target)}格`);
+      creep.say(`🚶 前往目标 (${targetPos.x},${targetPos.y}) 距离: ${distanceToTarget}格`);
+      console.log(`运输兵 ${creep.name} 协助矿工 ${target.name} 前往目标位置 (${targetPos.x},${targetPos.y})，当前距离: ${distanceToTarget}格`);
 
       // 先移动到矿工附近
       if (creep.pos.getRangeTo(target) > 1) {
-        console.log(`运输兵 ${creep.name} 距离矿工太远，移动到矿工附近`);
+        console.log(`运输兵 ${creep.name} 距离矿工太远 (${creep.pos.getRangeTo(target)}格)，移动到矿工附近`);
         creep.moveTo(target, { visualizePathStyle: { stroke: '#00ff00' } });
         return;
       }
@@ -154,20 +193,13 @@ export class RoleCarrier {
       // 在矿工附近，执行pull和移动
       console.log(`运输兵 ${creep.name} 在矿工附近，执行pull和移动`);
       const pullResult = creep.pull(target);
-      console.log(`运输兵 ${creep.name} pull结果: ${pullResult}`);
 
       if (pullResult == OK) {
         target.move(creep);
         // 运输兵向目标位置移动一步
-        console.log(`运输兵 ${creep.name} pull成功，矿工跟随，运输兵向目标移动`);
+        console.log(`运输兵 ${creep.name} pull成功，矿工 ${target.name} 跟随，运输兵向目标位置 (${targetPos.x},${targetPos.y}) 移动`);
         creep.moveTo(targetPos, { visualizePathStyle: { stroke: '#00ff00' } });
       } else if (pullResult == ERR_NOT_IN_RANGE) {
-        // 不在范围内，移动到矿工附近
-        console.log(`运输兵 ${creep.name} pull失败，不在范围内，移动到矿工附近`);
-        creep.moveTo(target, { visualizePathStyle: { stroke: '#00ff00' } });
-      } else {
-        // 其他错误，也移动到矿工附近
-        console.log(`运输兵 ${creep.name} pull其他错误: ${pullResult}，移动到矿工附近`);
         creep.moveTo(target, { visualizePathStyle: { stroke: '#00ff00' } });
       }
     }
@@ -236,56 +268,34 @@ export class RoleCarrier {
     private static collectResources(creep: Creep): void {
       let target: Resource | Structure | Ruin | null = null;
 
-      // 1. 优先收集矿点附近掉落的资源（静态矿工产生的）
+      // 1. 优先从墓碑收集资源
+      const tombstones = creep.room.find(FIND_TOMBSTONES, {
+        filter: (tombstone) => tombstone.store.getUsedCapacity(RESOURCE_ENERGY) > 0
+      });
+
+      if (tombstones.length > 0) {
+        const closestTombstone = creep.pos.findClosestByPath(tombstones);
+        if (closestTombstone) {
+          const result = creep.withdraw(closestTombstone, RESOURCE_ENERGY);
+          if (result === ERR_NOT_IN_RANGE) {
+            creep.moveTo(closestTombstone, {
+              visualizePathStyle: { stroke: '#ffaa00' }
+            });
+          } else if (result === OK) {
+            creep.say('🪦');
+          }
+          return; // 直接返回，不执行后续逻辑
+        }
+      }
+
+      // 2. 优先收集地上的资源
       const droppedResources = creep.room.find(FIND_DROPPED_RESOURCES, {
         filter: (resource) => resource.resourceType === RESOURCE_ENERGY
       });
 
       if (droppedResources.length > 0) {
-        // 优先选择矿点附近的掉落资源
-        const sources = creep.room.find(FIND_SOURCES);
-        if (sources.length > 0) {
-          // 找到距离矿点最近的掉落资源
-          let bestResource = droppedResources[0];
-          let bestDistance = Infinity;
-
-          for (const resource of droppedResources) {
-            for (const source of sources) {
-              const distance = resource.pos.getRangeTo(source);
-              if (distance < bestDistance) {
-                bestDistance = distance;
-                bestResource = resource;
-              }
-            }
-          }
-
-          target = bestResource;
-        } else {
-          // 如果没有矿点，选择最近的掉落资源
-          target = creep.pos.findClosestByPath(droppedResources);
-        }
-      }
-
-      // 2. 从墓碑收集资源
-      if (!target) {
-        const tombstones = creep.room.find(FIND_TOMBSTONES, {
-          filter: (tombstone) => tombstone.store.getUsedCapacity(RESOURCE_ENERGY) > 0
-        });
-
-        if (tombstones.length > 0) {
-          const closestTombstone = creep.pos.findClosestByPath(tombstones);
-          if (closestTombstone) {
-            const result = creep.withdraw(closestTombstone, RESOURCE_ENERGY);
-            if (result === ERR_NOT_IN_RANGE) {
-              creep.moveTo(closestTombstone, {
-                visualizePathStyle: { stroke: '#ffaa00' }
-              });
-            } else if (result === OK) {
-              creep.say('🪦');
-            }
-            return; // 直接返回，不执行后续逻辑
-          }
-        }
+        // 选择最近的掉落资源
+        target = creep.pos.findClosestByPath(droppedResources);
       }
 
       // 3. 从废墟收集资源
