@@ -1,7 +1,9 @@
 {
   "compilerOptions": {
     "module": "esnext",
-    "lib": ["es2018"],
+    "lib": [
+      "es2018"
+    ],
     "target": "es2018",
     "moduleResolution": "Node",
     "outDir": "dist",
@@ -11,9 +13,36 @@
     "experimentalDecorators": true,
     "noImplicitReturns": true,
     "allowSyntheticDefaultImports": true,
-    "allowUnreachableCode": false
+    "allowUnreachableCode": false,
+    "noImplicitAny": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "exactOptionalPropertyTypes": true,
+    "paths": {
+      "@/*": [
+        "*"
+      ],
+      "@/managers/*": [
+        "managers/*"
+      ],
+      "@/utils/*": [
+        "utils/*"
+      ],
+      "@/config/*": [
+        "config/*"
+      ],
+      "@/types/*": [
+        "types/*"
+      ],
+      "@/roles/*": [
+        "roles/*"
+      ]
+    }
   },
   "exclude": [
     "node_modules"
+  ],
+  "include": [
+    "src/**/*"
   ]
 }
