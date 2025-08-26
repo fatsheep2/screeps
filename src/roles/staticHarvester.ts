@@ -1,7 +1,8 @@
 export class RoleStaticHarvester {
   public static run(creep: Creep): void {
+    // 如果没有分配工作地点，从 memory 中选择一个
     if (!creep.memory.targetId) {
-      creep.say('⏳ 等待分配');
+      this.assignWorkLocation(creep);
       return;
     }
 
@@ -21,6 +22,36 @@ export class RoleStaticHarvester {
       creep.memory.working = false;
       creep.say('⏳ 等待运输');
     }
+  }
+
+  // 分配工作地点
+  private static assignWorkLocation(creep: Creep): void {
+    const roomMemory = Memory.rooms[creep.room.name];
+    if (!roomMemory || !roomMemory.miningSpots || roomMemory.miningSpots.length === 0) {
+      creep.say('⏳ 等待采矿点');
+      return;
+    }
+
+    // 获取房间中所有静态矿工
+    const staticHarvesters = creep.room.find(FIND_MY_CREEPS, {
+      filter: (c) => c.memory.role === 'staticHarvester' && c.memory.targetId
+    });
+
+    // 检查哪些采矿点已被占用
+    const occupiedSpots = staticHarvesters.map(c => c.memory.targetId);
+
+    // 寻找第一个未被占用的采矿点
+    for (const spot of roomMemory.miningSpots) {
+      if (!occupiedSpots.includes(spot)) {
+        creep.memory.targetId = spot;
+        creep.say(`📍 分配到 ${spot}`);
+        console.log(`静态矿工 ${creep.name} 分配到采矿点 ${spot}`);
+        return;
+      }
+    }
+
+    // 如果所有采矿点都被占用，等待
+    creep.say('⏳ 所有采矿点已满');
   }
 
   // travel 方法：检查是否可以到达采矿点并工作

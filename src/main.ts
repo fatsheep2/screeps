@@ -102,7 +102,7 @@ export const loop = ErrorMapper.wrapLoop(() => {
     }
 
     // 更新采矿点信息（每100tick刷新一次）
-    if (Game.time % 1 === 0) {
+    if (Game.time % 100 === 0) {
       updateMiningSpots(room);
     }
 
@@ -131,17 +131,44 @@ function updateMiningSpots(room: Room): void {
 
   console.log(`房间 ${room.name} 开始更新采矿点，找到 ${sources.length} 个资源点`);
 
-  // 直接记录资源点的位置
+  // 为每个资源点记录周围±1格内的可用位置
   for (const source of sources) {
-    const pos = source.pos;
-    miningSpots.push(`${pos.x},${pos.y}`);
-    console.log(`添加资源点 (${pos.x},${pos.y})`);
+    console.log(`检查资源点 (${source.pos.x},${source.pos.y}) 周围的可用位置`);
+
+    // 寻找资源点周围±1格内的所有位置
+    for (let x = source.pos.x - 1; x <= source.pos.x + 1; x++) {
+      for (let y = source.pos.y - 1; y <= source.pos.y + 1; y++) {
+        if (x >= 0 && x < 50 && y >= 0 && y < 50) {
+          const pos = new RoomPosition(x, y, room.name);
+
+          // 跳过资源点本身的位置
+          if (pos.isEqualTo(source.pos)) {
+            continue;
+          }
+
+          // 检查位置是否在±1格范围内
+          if (pos.getRangeTo(source) <= 1) {
+                        // 检查位置是否可用（只判断地形是否为墙）
+            const terrain = room.lookForAt(LOOK_TERRAIN, pos)[0];
+
+            // 只添加不是地形墙的位置
+            if (terrain !== 'wall') {
+              miningSpots.push(`${pos.x},${pos.y}`);
+              console.log(`添加可用采矿点 (${pos.x},${pos.y})，距离资源点 ${pos.getRangeTo(source)} 格`);
+            } else {
+              console.log(`跳过不可用位置 (${pos.x},${pos.y}) - 地形:${terrain}`);
+            }
+          }
+        }
+      }
+    }
   }
 
-  // 存储采矿点信息
+  // 存储采矿点信息和总数量
   Memory.rooms[room.name].miningSpots = miningSpots;
+  Memory.rooms[room.name].totalAvailableSpots = miningSpots.length;
 
-  console.log(`房间 ${room.name} 资源点更新完成，总共 ${miningSpots.length} 个资源点：${miningSpots.join(', ')}`);
+  console.log(`房间 ${room.name} 可用采矿点更新完成，总共 ${miningSpots.length} 个采矿点：${miningSpots.join(', ')}`);
 }
 
 // 调试函数：检查特定位置的详细信息
@@ -493,11 +520,11 @@ function spawnCreeps(room: Room, creepCounts: any, hasBasic: boolean): void {
 
   // 动态调整静态矿工数量限制
   const miningSpots = Memory.rooms[room.name].miningSpots;
-  const totalAvailableSpots = Memory.rooms[room.name].totalAvailableSpots || 0;
+  const miningSpotsCount = miningSpots ? miningSpots.length : 0;
 
   const dynamicRoleLimits = {
     ...ROLE_LIMITS,
-    staticHarvester: Math.max(0, totalAvailableSpots) // 根据总可用空地数量调整静态矿工数量
+    staticHarvester: miningSpotsCount // 根据采矿点数量动态调整静态矿工数量
   };
 
   // 根据基础兵种状态调整生产策略
@@ -507,7 +534,7 @@ function spawnCreeps(room: Room, creepCounts: any, hasBasic: boolean): void {
     priorities = getSpawnPriorities(room, creepCounts);
   } else {
     // 已建立基础兵种，优先补满矿工，然后是其他工种
-    priorities = getAdvancedSpawnPriorities(room, creepCounts, roomEnergy, totalAvailableSpots);
+    priorities = getAdvancedSpawnPriorities(room, creepCounts, roomEnergy, miningSpotsCount);
   }
 
   for (const role of priorities) {
@@ -571,7 +598,7 @@ function getSpawnPriorities(room: Room, creepCounts: any): string[] {
 }
 
 // 获取高级工种优先级（在基础工种齐全后的扩展）
-function getAdvancedSpawnPriorities(room: Room, creepCounts: any, roomEnergy: number, totalAvailableSpots: number): string[] {
+function getAdvancedSpawnPriorities(room: Room, creepCounts: any, roomEnergy: number, miningSpotsCount: number): string[] {
   const priorities: string[] = [];
 
   // 搬运工优先级最高，确保有足够的搬运工
@@ -580,7 +607,7 @@ function getAdvancedSpawnPriorities(room: Room, creepCounts: any, roomEnergy: nu
   }
 
   // 然后优先补满静态矿工
-  if (totalAvailableSpots > 0 && creepCounts.staticHarvester < totalAvailableSpots) {
+  if (miningSpotsCount > 0 && creepCounts.staticHarvester < miningSpotsCount) {
     priorities.push('staticHarvester');
   }
 
