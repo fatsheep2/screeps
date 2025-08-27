@@ -1,5 +1,6 @@
 import { ROLE_LIMITS, BASE_BODY_PARTS, BODY_EXTENSIONS } from '../config/creepConfig';
 import { getBodyCost } from '../utils/creepUtils';
+import { getRecommendedBodyParts } from './productionManager';
 
 // 尝试生产新 Creep
 export function spawnCreeps(room: Room, creepCounts: Record<string, number>, hasBasic: boolean): void {
@@ -118,27 +119,38 @@ function getAdvancedSpawnPriorities(_room: Room, creepCounts: Record<string, num
 
 // 根据可用能量和工种数量获取最优身体部件
 function getOptimalBodyParts(role: string, availableEnergy: number, creepCounts: Record<string, number>): BodyPartConstant[] {
-  // 基础配置
+  // 获取房间控制等级 - 通过room参数获取，需要修改函数签名
+  // 临时从Game.rooms获取第一个我的房间的RCL
+  const myRooms = Object.values(Game.rooms).filter(r => r.controller?.my);
+  const rcl = myRooms.length > 0 ? (myRooms[0].controller?.level || 1) : 1;
+  
+  // 优先使用智能生产管理器的推荐配置
+  const recommendedParts = getRecommendedBodyParts(role, rcl);
+  const recommendedCost = getBodyCost(recommendedParts);
+  
+  // 如果推荐配置能量充足，直接使用
+  if (recommendedCost <= availableEnergy && recommendedParts.length > 0) {
+    console.log(`[生产管理] 使用智能配置生产${role}: ${recommendedParts.join(',')}, 成本: ${recommendedCost}`);
+    return recommendedParts;
+  }
+  
+  console.log(`[生产管理] 智能配置成本过高(${recommendedCost}>${availableEnergy})，回退到传统配置`);
+  
+  // 回退到原有逻辑
   const baseParts = BASE_BODY_PARTS[role as keyof typeof BASE_BODY_PARTS];
   if (!baseParts) return [];
 
-  // 计算基础配置的能量消耗
   const baseCost = getBodyCost(baseParts);
-
-  // 如果基础配置都买不起，返回空数组
   if (baseCost > availableEnergy) {
     return [];
   }
 
   // 根据角色类型使用不同的升级策略
   if (role === 'carrier') {
-    // 搬运工：按照 MOVE:CARRY 1:2 的比例升级
     return getCarrierOptimalParts(availableEnergy, baseParts);
   } else if (role === 'staticHarvester') {
-    // 静态矿工：按照 WORK 的倍数升级
     return getStaticHarvesterOptimalParts(availableEnergy, baseParts);
   } else {
-    // 其他角色：使用原来的逻辑
     return getStandardOptimalParts(availableEnergy, baseParts, creepCounts, role);
   }
 }

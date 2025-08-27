@@ -132,12 +132,50 @@ export class RoleBuilder {
     }
 
     private static getEnergy(creep: Creep): void {
-      // 检查房间中是否有搬运工（Carrier）
+      // 检查是否需要请求能量配送
+      if (!(creep.memory as any).requestEnergy && creep.store.getFreeCapacity(RESOURCE_ENERGY) > 0) {
+        // 检查是否即将死亡，如果是则不请求能量
+        if (creep.ticksToLive && creep.ticksToLive < 50) {
+          // 即将死亡，尝试自行获取能量
+          this.getEnergyFromSources(creep);
+          return;
+        }
+
+        // 设置能量请求标记，搬运工会看到并创建配送任务
+        (creep.memory as any).requestEnergy = true;
+        creep.say('🙏 请求能量');
+        console.log(`[建筑者${creep.name}] 请求能量配送`);
+        return;
+      }
+
+      // 如果已经请求了但还没有收到配送，等待一段时间
+      if ((creep.memory as any).requestEnergy) {
+        // 等待配送，如果等待时间过长则转为自行获取
+        if (!(creep.memory as any).lastRequestTime) {
+          (creep.memory as any).lastRequestTime = Game.time;
+        }
+
+        if (Game.time - (creep.memory as any).lastRequestTime > 30) {
+          // 等待超时，转为自行获取能量
+          delete (creep.memory as any).requestEnergy;
+          delete (creep.memory as any).lastRequestTime;
+          this.getEnergyFromSources(creep);
+        } else {
+          creep.say('⏳ 等待配送');
+        }
+        return;
+      }
+
+      // 没有请求标记，说明是首次或自行获取模式
+      this.getEnergyFromSources(creep);
+    }
+
+    private static getEnergyFromSources(creep: Creep): void {
+      // 检查房间中是否有搬运工和静态矿工
       const carriers = creep.room.find(FIND_MY_CREEPS, {
         filter: (c) => c.memory.role === 'carrier'
       });
 
-      // 检查房间中是否有静态矿工（StaticHarvester）
       const staticHarvesters = creep.room.find(FIND_MY_CREEPS, {
         filter: (c) => c.memory.role === 'staticHarvester'
       });

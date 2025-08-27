@@ -1,7 +1,7 @@
 // 任务系统类型定义
 
 // 任务类型
-export type TaskType = 'assistStaticHarvester' | 'collectEnergy' | 'transferEnergy' | 'buildStructure' | 'upgradeController';
+export type TaskType = 'assistStaticHarvester' | 'assistStaticUpgrader' | 'collectEnergy' | 'supplyEnergy' | 'deliverToSpawn' | 'deliverToCreep' | 'buildStructure' | 'upgradeController';
 
 // 任务状态
 export type TaskStatus = 'pending' | 'assigned' | 'in_progress' | 'completed' | 'failed' | 'expired';
@@ -34,6 +34,16 @@ export interface AssistStaticHarvesterTask extends BaseTask {
   };
 }
 
+// 协助静态升级者任务
+export interface AssistStaticUpgraderTask extends BaseTask {
+  type: 'assistStaticUpgrader';
+  upgraderId: string;
+  targetPosition: {
+    x: number;
+    y: number;
+  };
+}
+
 // 收集能量任务
 export interface CollectEnergyTask extends BaseTask {
   type: 'collectEnergy';
@@ -48,18 +58,40 @@ export interface CollectEnergyTask extends BaseTask {
   storageTargetType?: 'extension' | 'spawn' | 'storage' | 'container'; // 存储目标类型
 }
 
-// 转移能量任务
-export interface TransferEnergyTask extends BaseTask {
-  type: 'transferEnergy';
+// 供应能量任务 - 为spawn/extension补充能量 
+export interface SupplyEnergyTask extends BaseTask {
+  type: 'supplyEnergy';
   targetId: string;
-  targetType: 'extension' | 'spawn' | 'upgrader' | 'container';
+  targetType: 'extension' | 'spawn' | 'tower';
   position: {
     x: number;
     y: number;
   };
   requiredAmount: number;
-  sourceId?: string; // 能量来源ID
-  sourceType?: 'container' | 'storage' | 'dropped'; // 能量来源类型
+}
+
+// 配送到spawn任务 - 优先保证spawn能量充足
+export interface DeliverToSpawnTask extends BaseTask {
+  type: 'deliverToSpawn';
+  spawnId: string;
+  position: {
+    x: number;
+    y: number;
+  };
+  requiredAmount: number;
+}
+
+// 配送给creep任务 - 给升级者/建筑者配送能量
+export interface DeliverToCreepTask extends BaseTask {
+  type: 'deliverToCreep';
+  creepId: string;
+  creepName: string;
+  position: {
+    x: number;
+    y: number;
+  };
+  requiredAmount: number;
+  requesterId: string; // 请求者ID，用于验证任务有效性
 }
 
 // 建造结构任务
@@ -84,7 +116,7 @@ export interface UpgradeControllerTask extends BaseTask {
 }
 
 // 联合任务类型
-export type Task = AssistStaticHarvesterTask | CollectEnergyTask | TransferEnergyTask | BuildStructureTask | UpgradeControllerTask;
+export type Task = AssistStaticHarvesterTask | AssistStaticUpgraderTask | CollectEnergyTask | SupplyEnergyTask | DeliverToSpawnTask | DeliverToCreepTask | BuildStructureTask | UpgradeControllerTask;
 
 // 任务分配结果
 export interface TaskAssignmentResult {

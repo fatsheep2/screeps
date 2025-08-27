@@ -111,19 +111,26 @@ export class RoleCarrier {
     if (task.type === 'assistStaticHarvester') {
       const result = this.executeTransportTask(creep, task);
       if (!result.shouldContinue) {
-        // 任务完成，清理任务
         this.completeTask(creep, task);
       }
     } else if (task.type === 'collectEnergy') {
       const result = this.executeCollectEnergyTask(creep, task);
       if (!result.shouldContinue) {
-        // 任务完成，清理任务
         this.completeTask(creep, task);
       }
-    } else if (task.type === 'transferEnergy') {
-      const result = this.executeTransferEnergyTask(creep, task);
+    } else if (task.type === 'supplyEnergy') {
+      const result = this.executeSupplyEnergyTask(creep, task);
       if (!result.shouldContinue) {
-        // 任务完成，清理任务
+        this.completeTask(creep, task);
+      }
+    } else if (task.type === 'deliverToSpawn') {
+      const result = this.executeDeliverToSpawnTask(creep, task);
+      if (!result.shouldContinue) {
+        this.completeTask(creep, task);
+      }
+    } else if (task.type === 'deliverToCreep') {
+      const result = this.executeDeliverToCreepTask(creep, task);
+      if (!result.shouldContinue) {
         this.completeTask(creep, task);
       }
     } else {
@@ -396,82 +403,6 @@ export class RoleCarrier {
     return { success: true, shouldContinue: true, message: '正在存储能量' };
   }
 
-  // 执行转移能量任务
-  private static executeTransferEnergyTask(creep: Creep, task: any): { success: boolean; shouldContinue: boolean; message?: string } {
-    console.log(`[搬运工${creep.name}] 执行转移能量任务: ${task.id}`);
-
-    // 如果背包空了，去获取能量
-    if (creep.store.getUsedCapacity(RESOURCE_ENERGY) === 0) {
-      return this.getEnergyForTransfer(creep, task);
-    }
-
-    // 获取转移目标
-    const transferTarget = Game.getObjectById(task.targetId);
-    if (!transferTarget) {
-      console.log(`[搬运工${creep.name}] 转移目标不存在: ${task.targetId}`);
-      return { success: false, shouldContinue: false, message: '转移目标不存在' };
-    }
-
-    // 如果不在转移目标附近，移动到目标
-    const transferPos = (transferTarget as any).pos;
-    if (!creep.pos.isNearTo(transferPos)) {
-      creep.moveTo(transferPos, { reusePath: 3 });
-      creep.say('🚚 去转移');
-      return { success: true, shouldContinue: true, message: '正在前往转移目标' };
-    }
-
-    // 在转移目标附近，开始转移能量
-    const transferResult = creep.transfer(transferTarget as Structure, RESOURCE_ENERGY);
-    if (transferResult === OK) {
-      creep.say('💾 转移');
-      console.log(`[搬运工${creep.name}] 成功转移能量到 ${transferTarget.id}`);
-
-      // 如果目标满了或者背包空了，任务完成
-      if ((transferTarget as any).store?.getFreeCapacity(RESOURCE_ENERGY) === 0 ||
-          creep.store.getUsedCapacity(RESOURCE_ENERGY) === 0) {
-        return { success: true, shouldContinue: false, message: '转移任务完成' };
-      }
-    } else {
-      console.log(`[搬运工${creep.name}] 转移能量失败: ${transferResult}`);
-    }
-
-    return { success: true, shouldContinue: true, message: '正在转移能量' };
-  }
-
-  // 为转移任务获取能量
-  private static getEnergyForTransfer(creep: Creep, task: any): { success: boolean; shouldContinue: boolean; message?: string } {
-    // 获取能量来源
-    const energySource = Game.getObjectById(task.sourceId);
-    if (!energySource) {
-      console.log(`[搬运工${creep.name}] 能量来源不存在: ${task.sourceId}`);
-      return { success: false, shouldContinue: false, message: '能量来源不存在' };
-    }
-
-    // 如果不在能量来源附近，移动到来源
-    const sourcePos = (energySource as any).pos;
-    if (!creep.pos.isNearTo(sourcePos)) {
-      creep.moveTo(sourcePos, { reusePath: 3 });
-      creep.say('📦 去获取');
-      return { success: true, shouldContinue: true, message: '正在前往能量来源' };
-    }
-
-    // 在能量来源附近，开始获取能量
-    let withdrawResult: number;
-    if (task.sourceType === 'dropped') {
-      withdrawResult = creep.pickup(energySource as Resource);
-    } else {
-      withdrawResult = creep.withdraw(energySource as Structure, RESOURCE_ENERGY);
-    }
-
-    if (withdrawResult === OK) {
-      creep.say('📦 获取');
-      console.log(`[搬运工${creep.name}] 成功获取能量`);
-    } else {
-      console.log(`[搬运工${creep.name}] 获取能量失败: ${withdrawResult}`);
-    }
-
-    return { success: true, shouldContinue: true, message: '正在获取能量' };
-  }
 
   // 执行默认行为（收集或运输能量）
   private static executeDefaultBehavior(creep: Creep): void {
@@ -716,6 +647,169 @@ export class RoleCarrier {
       creep.say('⏳ 无存储');
       console.log(`[搬运工${creep.name}] 所有存储都满了，等待中`);
     }
+  }
+
+  // 执行供应能量任务（spawn/extension）
+  private static executeSupplyEnergyTask(creep: Creep, task: any): { success: boolean; shouldContinue: boolean; message?: string } {
+    // 如果没有能量，先去获取
+    if (creep.store.getUsedCapacity(RESOURCE_ENERGY) === 0) {
+      return this.getEnergyFromBestSource(creep);
+    }
+
+    // 获取目标建筑
+    const target = Game.getObjectById(task.targetId);
+    if (!target) {
+      console.log(`[搬运工${creep.name}] 供应目标不存在: ${task.targetId}`);
+      return { success: false, shouldContinue: false, message: '供应目标不存在' };
+    }
+
+    // 检查目标是否还需要能量
+    if ((target as any).store?.getFreeCapacity(RESOURCE_ENERGY) === 0) {
+      console.log(`[搬运工${creep.name}] 供应目标已满: ${task.targetId}`);
+      return { success: true, shouldContinue: false, message: '供应目标已满' };
+    }
+
+    // 移动到目标并传输能量
+    const transferResult = creep.transfer(target as Structure, RESOURCE_ENERGY);
+    if (transferResult === ERR_NOT_IN_RANGE) {
+      creep.moveTo(target as Structure);
+      creep.say('🚚 去供应');
+      return { success: true, shouldContinue: true, message: '前往供应目标' };
+    } else if (transferResult === OK) {
+      creep.say('⚡ 供应');
+      console.log(`[搬运工${creep.name}] 成功供应能量到 ${(target as Structure).structureType}`);
+      return { success: true, shouldContinue: false, message: '供应完成' };
+    } else {
+      console.log(`[搬运工${creep.name}] 供应失败: ${transferResult}`);
+      return { success: false, shouldContinue: false, message: '供应失败' };
+    }
+  }
+
+  // 执行配送到spawn任务
+  private static executeDeliverToSpawnTask(creep: Creep, task: any): { success: boolean; shouldContinue: boolean; message?: string } {
+    // 如果没有能量，先去获取
+    if (creep.store.getUsedCapacity(RESOURCE_ENERGY) === 0) {
+      return this.getEnergyFromBestSource(creep);
+    }
+
+    // 获取spawn
+    const spawn = Game.getObjectById(task.spawnId);
+    if (!spawn) {
+      console.log(`[搬运工${creep.name}] spawn不存在: ${task.spawnId}`);
+      return { success: false, shouldContinue: false, message: 'spawn不存在' };
+    }
+
+    // 检查spawn是否还需要能量
+    if ((spawn as StructureSpawn).store.getFreeCapacity(RESOURCE_ENERGY) === 0) {
+      console.log(`[搬运工${creep.name}] spawn已满: ${task.spawnId}`);
+      return { success: true, shouldContinue: false, message: 'spawn已满' };
+    }
+
+    // 移动到spawn并传输能量
+    const transferResult = creep.transfer(spawn as StructureSpawn, RESOURCE_ENERGY);
+    if (transferResult === ERR_NOT_IN_RANGE) {
+      creep.moveTo(spawn as StructureSpawn);
+      creep.say('🚚 去spawn');
+      return { success: true, shouldContinue: true, message: '前往spawn' };
+    } else if (transferResult === OK) {
+      creep.say('🏰 填充');
+      console.log(`[搬运工${creep.name}] 成功填充spawn`);
+      return { success: true, shouldContinue: false, message: 'spawn填充完成' };
+    } else {
+      console.log(`[搬运工${creep.name}] spawn填充失败: ${transferResult}`);
+      return { success: false, shouldContinue: false, message: 'spawn填充失败' };
+    }
+  }
+
+  // 执行配送给creep任务
+  private static executeDeliverToCreepTask(creep: Creep, task: any): { success: boolean; shouldContinue: boolean; message?: string } {
+    // 如果没有能量，先去获取
+    if (creep.store.getUsedCapacity(RESOURCE_ENERGY) === 0) {
+      return this.getEnergyFromBestSource(creep);
+    }
+
+    // 获取目标creep
+    const targetCreep = Game.getObjectById(task.creepId);
+    if (!targetCreep) {
+      console.log(`[搬运工${creep.name}] 目标creep不存在: ${task.creepId}`);
+      return { success: false, shouldContinue: false, message: '目标creep不存在' };
+    }
+
+    // 验证请求者ID确保任务有效性
+    if (task.requesterId !== targetCreep.id) {
+      console.log(`[搬运工${creep.name}] 任务请求者ID不匹配: ${task.requesterId} != ${targetCreep.id}`);
+      return { success: false, shouldContinue: false, message: '请求者ID不匹配' };
+    }
+
+    // 检查creep是否还需要能量
+    if ((targetCreep as Creep).store.getFreeCapacity(RESOURCE_ENERGY) === 0) {
+      console.log(`[搬运工${creep.name}] 目标creep已满: ${task.creepId}`);
+      return { success: true, shouldContinue: false, message: '目标creep已满' };
+    }
+
+    // 移动到目标creep并传输能量
+    const transferResult = creep.transfer(targetCreep as Creep, RESOURCE_ENERGY);
+    if (transferResult === ERR_NOT_IN_RANGE) {
+      creep.moveTo(targetCreep as Creep);
+      creep.say('🚚 去配送');
+      return { success: true, shouldContinue: true, message: '前往目标creep' };
+    } else if (transferResult === OK) {
+      creep.say('⚡ 配送');
+      console.log(`[搬运工${creep.name}] 成功配送能量给 ${(targetCreep as Creep).name}`);
+      return { success: true, shouldContinue: false, message: 'creep配送完成' };
+    } else {
+      console.log(`[搬运工${creep.name}] creep配送失败: ${transferResult}`);
+      return { success: false, shouldContinue: false, message: 'creep配送失败' };
+    }
+  }
+
+  // 从最佳来源获取能量
+  private static getEnergyFromBestSource(creep: Creep): { success: boolean; shouldContinue: boolean; message?: string } {
+    // 优先从容器获取能量
+    const containers = creep.room.find(FIND_STRUCTURES, {
+      filter: structure => (structure.structureType === STRUCTURE_CONTAINER ||
+                           structure.structureType === STRUCTURE_STORAGE) &&
+                          structure.store.getUsedCapacity(RESOURCE_ENERGY) > 0
+    });
+
+    if (containers.length > 0) {
+      const nearestContainer = creep.pos.findClosestByPath(containers);
+      if (nearestContainer) {
+        const withdrawResult = creep.withdraw(nearestContainer, RESOURCE_ENERGY);
+        if (withdrawResult === ERR_NOT_IN_RANGE) {
+          creep.moveTo(nearestContainer);
+          creep.say('📦 取能量');
+          return { success: true, shouldContinue: true, message: '前往能量来源' };
+        } else if (withdrawResult === OK) {
+          creep.say('📦 获取');
+          return { success: true, shouldContinue: true, message: '获取能量成功' };
+        }
+      }
+    }
+
+    // 如果没有容器，从掉落资源获取
+    const droppedEnergy = creep.room.find(FIND_DROPPED_RESOURCES, {
+      filter: resource => resource.resourceType === RESOURCE_ENERGY
+    });
+
+    if (droppedEnergy.length > 0) {
+      const nearestEnergy = creep.pos.findClosestByPath(droppedEnergy);
+      if (nearestEnergy) {
+        const pickupResult = creep.pickup(nearestEnergy);
+        if (pickupResult === ERR_NOT_IN_RANGE) {
+          creep.moveTo(nearestEnergy);
+          creep.say('📦 捡能量');
+          return { success: true, shouldContinue: true, message: '前往掉落能量' };
+        } else if (pickupResult === OK) {
+          creep.say('📦 捡取');
+          return { success: true, shouldContinue: true, message: '捡取能量成功' };
+        }
+      }
+    }
+
+    // 没有可用能量来源
+    console.log(`[搬运工${creep.name}] 没有找到可用的能量来源`);
+    return { success: false, shouldContinue: false, message: '没有能量来源' };
   }
 }
 

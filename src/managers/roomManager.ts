@@ -3,6 +3,7 @@ import { updateBuildingLayout, updateRoadPlanning } from './buildingManager';
 import { spawnCreeps } from './spawnManager';
 import { manageCombatProduction, organizeCombatSquads, updateCombatSquads } from './combatManager';
 import { updateAttackTasks } from './attackManager';
+import { updateProductionPlan } from './productionManager';
 import { countRoomCreeps, hasBasicCreeps } from '../utils/creepUtils';
 import { RoleUpgrader } from '../roles/upgrader';
 import { RoleStaticHarvester } from '../roles/staticHarvester';
@@ -15,13 +16,20 @@ import { RoleHealer } from '../roles/healer';
 
 // 管理房间
 export function manageRoom(room: Room): void {
+  // 更新智能生产计划（每50tick更新一次以避免频繁调整）
+  if (Game.time % 50 === 0) {
+    updateProductionPlan(room);
+    updateMiningSpots(room);
+    updateBuildingLayout(room);
+  }
+
   // 统计当前各角色数量
   const creepCounts = countRoomCreeps(room);
 
   // 检查是否已建立基础兵种
   const hasBasic = hasBasicCreeps(creepCounts);
 
-  // 尝试生产新 Creep
+  // 尝试生产新 Creep（现在使用智能计划）
   spawnCreeps(room, creepCounts, hasBasic);
 
   // 管理战斗单位生产
@@ -115,21 +123,24 @@ function cleanupCompletedTransportTasks(room: Room): void {
   });
 }
 
-// 完整的任务系统
+// 完整的任务系统 - 优化版
 function updateTaskSystemWithNewManager(room: Room): void {
-  // 扫描静态矿工，创建搬运任务
+  // 1. 扫描静态矿工，创建搬运任务（优先级：urgent）
   scanStaticHarvestersForTransport(room);
 
-  // 扫描掉落资源，创建收集任务
+  // 2. 扫描掉落资源，创建收集任务（优先级：high）
   scanDroppedResourcesForCollection(room);
 
-  // 建筑转移改为搬运工自主决策，不创建任务
-  // scanBuildingsForEnergyTransfer(room);
+  // 3. 扫描spawn/extension能量需求（优先级：high）
+  scanSpawnExtensionEnergyNeeds(room);
 
-  // 清理已完成的任务
+  // 4. 扫描creep能量请求（优先级：normal）
+  scanCreepEnergyRequests(room);
+
+  // 5. 清理过期和失效任务
   cleanupCompletedTransportTasks(room);
 
-  // 主动分配任务给空闲的搬运工
+  // 6. 主动分配任务给空闲的搬运工
   assignPendingTasksToCarriers(room);
 }
 
@@ -580,4 +591,135 @@ export function updateRoomStatus(room: Room): void {
   updateRoadPlanning(room);
 
   // 任务系统现在由新的任务管理器处理
+}
+
+// 扫描spawn/extension能量需求
+function scanSpawnExtensionEnergyNeeds(room: Room): void {
+  const roomMemory = Memory.rooms[room.name];
+  if (!roomMemory || !roomMemory.tasks) return;
+
+  // 限制任务数量，避免创建过多任务
+  const existingSupplyTasks = Object.values(roomMemory.tasks).filter(
+    task => task.type === 'supplyEnergy' || task.type === 'deliverToSpawn'
+  ).length;
+
+  if (existingSupplyTasks >= 3) {
+    return; // 已有足够的供应任务
+  }
+
+  // 检查spawn能量需求（最高优先级）
+  const spawns = room.find(FIND_MY_SPAWNS, {
+    filter: spawn => spawn.store.getFreeCapacity(RESOURCE_ENERGY) > 0
+  });
+
+  for (const spawn of spawns) {
+    const existingTask = Object.values(roomMemory.tasks).find(
+      task => task.type === 'deliverToSpawn' && (task as any).spawnId === spawn.id
+    );
+
+    if (!existingTask) {
+      const taskId = `deliverToSpawn_${spawn.id}_${Game.time}`;
+      roomMemory.tasks[taskId] = {
+        id: taskId,
+        type: 'deliverToSpawn',
+        priority: 'high',
+        status: 'pending',
+        roomName: room.name,
+        createdAt: Game.time,
+        expiresAt: Game.time + 100,
+        spawnId: spawn.id,
+        position: { x: spawn.pos.x, y: spawn.pos.y },
+        requiredAmount: spawn.store.getFreeCapacity(RESOURCE_ENERGY)
+      };
+
+      console.log(`[任务系统] 创建spawn能量配送任务: ${taskId}, 需求量: ${spawn.store.getFreeCapacity(RESOURCE_ENERGY)}`);
+      return; // 一次只创建一个任务
+    }
+  }
+
+  // 检查extension能量需求
+  if (existingSupplyTasks < 2) {
+    const extensions = room.find(FIND_MY_STRUCTURES, {
+      filter: structure => structure.structureType === STRUCTURE_EXTENSION &&
+                          structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0
+    });
+
+    if (extensions.length > 0) {
+      const nearestExtension = room.find(FIND_MY_SPAWNS)[0]?.pos.findClosestByPath(extensions);
+      
+      if (nearestExtension) {
+        const existingTask = Object.values(roomMemory.tasks).find(
+          task => task.type === 'supplyEnergy' && (task as any).targetId === nearestExtension.id
+        );
+
+        if (!existingTask) {
+          const taskId = `supplyEnergy_${nearestExtension.id}_${Game.time}`;
+          roomMemory.tasks[taskId] = {
+            id: taskId,
+            type: 'supplyEnergy',
+            priority: 'high',
+            status: 'pending',
+            roomName: room.name,
+            createdAt: Game.time,
+            expiresAt: Game.time + 100,
+            targetId: nearestExtension.id,
+            targetType: 'extension',
+            position: { x: nearestExtension.pos.x, y: nearestExtension.pos.y },
+            requiredAmount: (nearestExtension as StructureExtension).store.getFreeCapacity(RESOURCE_ENERGY)
+          };
+
+          console.log(`[任务系统] 创建extension能量供应任务: ${taskId}`);
+        }
+      }
+    }
+  }
+}
+
+// 扫描creep能量请求
+function scanCreepEnergyRequests(room: Room): void {
+  const roomMemory = Memory.rooms[room.name];
+  if (!roomMemory || !roomMemory.tasks) return;
+
+  // 检查升级者和建筑者的能量请求
+  const needEnergyCreeps = room.find(FIND_MY_CREEPS, {
+    filter: creep => (creep.memory.role === 'upgrader' || creep.memory.role === 'builder') &&
+                     creep.store.getFreeCapacity(RESOURCE_ENERGY) > 0 &&
+                     (creep.memory as any).requestEnergy === true
+  });
+
+  for (const creep of needEnergyCreeps) {
+    // 检查creep是否即将死亡（TTL < 50），如果是则跳过
+    if (creep.ticksToLive && creep.ticksToLive < 50) {
+      delete (creep.memory as any).requestEnergy;
+      continue;
+    }
+
+    const existingTask = Object.values(roomMemory.tasks).find(
+      task => task.type === 'deliverToCreep' && (task as any).creepId === creep.id
+    );
+
+    if (!existingTask) {
+      const taskId = `deliverToCreep_${creep.name}_${Game.time}`;
+      roomMemory.tasks[taskId] = {
+        id: taskId,
+        type: 'deliverToCreep',
+        priority: 'normal',
+        status: 'pending',
+        roomName: room.name,
+        createdAt: Game.time,
+        expiresAt: Game.time + 50, // 较短的过期时间
+        creepId: creep.id,
+        creepName: creep.name,
+        position: { x: creep.pos.x, y: creep.pos.y },
+        requiredAmount: creep.store.getFreeCapacity(RESOURCE_ENERGY),
+        requesterId: creep.id
+      };
+
+      console.log(`[任务系统] 创建creep能量配送任务: ${taskId} -> ${creep.name}`);
+      
+      // 清除请求标记
+      delete (creep.memory as any).requestEnergy;
+      return; // 一次只处理一个请求
+    }
+  }
 }

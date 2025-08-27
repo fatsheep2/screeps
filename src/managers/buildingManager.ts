@@ -1,216 +1,387 @@
-// 更新房间的建筑布局建议
-export function updateBuildingLayout(room: Room): void {
-  const sources = room.find(FIND_SOURCES);
-  const extensions = room.find(FIND_MY_STRUCTURES, {
-    filter: (structure) => structure.structureType === STRUCTURE_EXTENSION
-  });
-  const containers = room.find(FIND_STRUCTURES, {
-    filter: (structure) => structure.structureType === STRUCTURE_CONTAINER
-  });
+// 智能建筑布局管理器
+export class BuildingLayoutManager {
 
-  // 优先建造 Container（放在矿点周围，帮助收集资源）
-  if (containers.length < sources.length) {
-    const bestPos = findBestContainerPosition(room);
-    if (bestPos) {
-      room.createConstructionSite(bestPos.x, bestPos.y, STRUCTURE_CONTAINER);
-    }
+  // 主入口：更新房间建筑布局
+  public static updateBuildingLayout(room: Room): void {
+    console.log(`[建筑管理] 开始更新房间 ${room.name} 的建筑布局`);
+    
+    // 1. 优先建造矿点容器
+    this.buildSourceContainers(room);
+    
+    // 2. 执行棋盘式布局建设
+    this.buildCheckerboardLayout(room);
+    
+    // 3. 建设主要道路网络
+    this.buildMainRoadNetwork(room);
+    
+    console.log(`[建筑管理] 房间 ${room.name} 建筑布局更新完成`);
   }
 
-  // 然后建造 Extension（贴着主城斜向扩展）
-  if (extensions.length < 5) { // 限制 Extension 数量，避免过度拥挤
-    const bestPos = findBestExtensionPosition(room);
-    if (bestPos) {
-      room.createConstructionSite(bestPos.x, bestPos.y, STRUCTURE_EXTENSION);
+  // 建设棋盘式布局
+  private static buildCheckerboardLayout(room: Room): void {
+    const spawn = room.find(FIND_MY_SPAWNS)[0];
+    if (!spawn) {
+      console.log(`[建筑管理] 房间 ${room.name} 没有找到主城，跳过棋盘布局`);
+      return;
     }
-  }
-}
 
-// 寻找扩展的最佳位置（贴着主城斜向扩展）
-function findBestExtensionPosition(room: Room): RoomPosition | null {
-  const spawns = room.find(FIND_MY_SPAWNS);
-  if (spawns.length === 0) return null;
+    // 计算当前建筑状态
+    const currentExtensions = room.find(FIND_MY_STRUCTURES, {
+      filter: s => s.structureType === STRUCTURE_EXTENSION
+    }).length;
+    
+    const currentConstructionSites = room.find(FIND_MY_CONSTRUCTION_SITES).length;
+    const maxExtensions = this.getMaxExtensionsForRCL(room.controller?.level || 1);
+    
+    console.log(`[建筑管理] 当前Extension: ${currentExtensions}/${maxExtensions}, 建筑工地: ${currentConstructionSites}`);
+    
+    // 限制建筑工地数量，避免过度建设
+    if (currentConstructionSites >= 5) {
+      console.log(`[建筑管理] 建筑工地过多(${currentConstructionSites})，暂停新建`);
+      return;
+    }
 
-  const spawn = spawns[0]; // 使用第一个 spawn 作为参考点
-
-  // 定义棋盘式斜向扩展的偏移量（#代表主城，x代表extension）
-  // |---|----|----|----|----|
-  // |x| |x| |x|
-  // | |x| |x| |
-  // |x| |#| |x|
-  // | |x| |x| |
-  // |x| |x| |x|
-  const chessboardOffsets = [
-    // 第一层：紧贴 spawn 的 4 个对角位置
-    { x: -1, y: -1 }, { x: 1, y: -1 },
-    { x: -1, y: 1 },  { x: 1, y: 1 },
-
-    // 第二层：向外扩展的 8 个位置
-    { x: -2, y: -2 }, { x: 0, y: -2 }, { x: 2, y: -2 },
-    { x: -2, y: 0 },                    { x: 2, y: 0 },
-    { x: -2, y: 2 },  { x: 0, y: 2 },  { x: 2, y: 2 },
-
-    // 第三层：最外层的 4 个位置
-    { x: -3, y: -1 }, { x: 3, y: -1 },
-    { x: -3, y: 1 },  { x: 3, y: 1 }
-  ];
-
-  // 按照棋盘式布局顺序寻找可用位置
-  for (const offset of chessboardOffsets) {
-    const x = spawn.pos.x + offset.x;
-    const y = spawn.pos.y + offset.y;
-
-    if (x >= 0 && x < 50 && y >= 0 && y < 50) {
-      const pos = new RoomPosition(x, y, room.name);
-
-      // 检查位置是否可用
-      const creepsAtPos = room.lookForAt(LOOK_CREEPS, pos);
-      const structuresAtPos = room.lookForAt(LOOK_STRUCTURES, pos);
-      const constructionSitesAtPos = room.lookForAt(LOOK_CONSTRUCTION_SITES, pos);
-
-      if (creepsAtPos.length === 0 &&
-          structuresAtPos.length === 0 &&
-          constructionSitesAtPos.length === 0) {
-        return pos; // 返回第一个可用的位置，确保有序扩展
+    // 分层建设：逐层完成后再扩展
+    for (let layer = 1; layer <= 8; layer++) {
+      if (this.isLayerComplete(room, spawn.pos, layer - 1)) {
+        // 前一层已完成，尝试建设当前层
+        const built = this.buildLayer(room, spawn.pos, layer);
+        if (built > 0) {
+          console.log(`[建筑管理] 在第${layer}层建设了${built}个建筑`);
+          return; // 一次只建设一层
+        }
       }
     }
   }
 
-  return null;
-}
+  // 检查某一层是否建设完成
+  private static isLayerComplete(room: Room, center: RoomPosition, layer: number): boolean {
+    if (layer === 0) return true; // 第0层（中心）总是完成的
+    
+    const layerPositions = this.getLayerPositions(center, layer);
+    const currentExtensions = room.find(FIND_MY_STRUCTURES, {
+      filter: s => s.structureType === STRUCTURE_EXTENSION
+    }).length;
+    const maxExtensions = this.getMaxExtensionsForRCL(room.controller?.level || 1);
+    
+    for (const pos of layerPositions) {
+      const pattern = this.getPositionPattern(center, pos);
+      
+      if (pattern === 'EXTENSION') {
+        // Extension位置：只有在未达到RCL上限时才要求建造
+        if (currentExtensions < maxExtensions) {
+          const hasStructure = room.lookForAt(LOOK_STRUCTURES, pos).length > 0;
+          const hasConstructionSite = room.lookForAt(LOOK_CONSTRUCTION_SITES, pos).length > 0;
+          
+          if (!hasStructure && !hasConstructionSite) {
+            return false; // Extension位置未完成
+          }
+        }
+        // 如果Extension已达上限，跳过Extension位置的检查
+      } else if (pattern === 'ROAD') {
+        // Road位置：总是要求建造
+        const hasStructure = room.lookForAt(LOOK_STRUCTURES, pos).length > 0;
+        const hasConstructionSite = room.lookForAt(LOOK_CONSTRUCTION_SITES, pos).length > 0;
+        
+        if (!hasStructure && !hasConstructionSite) {
+          return false; // Road位置未完成
+        }
+      }
+    }
+    
+    return true;
+  }
 
-// 寻找容器的最佳位置（放在矿点周围）
-function findBestContainerPosition(room: Room): RoomPosition | null {
-  const sources = room.find(FIND_SOURCES);
-  if (sources.length === 0) return null;
-
-  // 为每个矿点寻找最佳的 Container 位置
-  for (const source of sources) {
+  // 建设指定层
+  private static buildLayer(room: Room, center: RoomPosition, layer: number): number {
+    let builtCount = 0;
+    const layerPositions = this.getLayerPositions(center, layer);
+    
+    console.log(`[建筑管理] 开始建设第${layer}层，共${layerPositions.length}个位置`);
+    
+    for (const pos of layerPositions) {
+      if (!this.isPositionInRoom(pos)) continue;
+      
+      const pattern = this.getPositionPattern(center, pos);
+      
+      if (this.canBuildAt(room, pos)) {
+        let structureType: BuildableStructureConstant | null = null;
+        
+        if (pattern === 'EXTENSION') {
+          const currentExtensions = room.find(FIND_MY_STRUCTURES, {
+            filter: s => s.structureType === STRUCTURE_EXTENSION
+          }).length;
+          const maxExtensions = this.getMaxExtensionsForRCL(room.controller?.level || 1);
+          
+          if (currentExtensions < maxExtensions) {
+            structureType = STRUCTURE_EXTENSION;
+          }
+        } else if (pattern === 'ROAD') {
+          structureType = STRUCTURE_ROAD;
+        }
+        
+        if (structureType) {
+          const result = room.createConstructionSite(pos.x, pos.y, structureType);
+          if (result === OK) {
+            console.log(`[建筑管理] 在 (${pos.x},${pos.y}) 创建${structureType}建筑工地`);
+            builtCount++;
+          }
+        }
+      }
+    }
+    
+    return builtCount;
+  }
+  
+  // 获取某层的所有位置
+  private static getLayerPositions(center: RoomPosition, layer: number): RoomPosition[] {
     const positions: RoomPosition[] = [];
+    
+    for (let dx = -layer; dx <= layer; dx++) {
+      for (let dy = -layer; dy <= layer; dy++) {
+        // 只取该层的边界位置，不包括内层
+        if (Math.abs(dx) === layer || Math.abs(dy) === layer) {
+          positions.push(new RoomPosition(
+            center.x + dx,
+            center.y + dy,
+            center.roomName
+          ));
+        }
+      }
+    }
+    
+    return positions;
+  }
+  
+  // 根据位置确定应该建造什么（棋盘模式）
+  private static getPositionPattern(center: RoomPosition, pos: RoomPosition): string {
+    const dx = pos.x - center.x;
+    const dy = pos.y - center.y;
+    
+    // 棋盘模式：(x+y)为偶数的位置放Extension，奇数的位置放Road
+    const sum = Math.abs(dx) + Math.abs(dy);
+    
+    if (sum % 2 === 0) {
+      return 'EXTENSION';
+    } else {
+      return 'ROAD';
+    }
+  }
 
-    // 在矿点周围 2 格范围内寻找位置
-    for (let x = source.pos.x - 2; x <= source.pos.x + 2; x++) {
-      for (let y = source.pos.y - 2; y <= source.pos.y + 2; y++) {
-        if (x >= 0 && x < 50 && y >= 0 && y < 50) {
-          const pos = new RoomPosition(x, y, room.name);
+  // 检查位置是否可以建造
+  private static canBuildAt(room: Room, pos: RoomPosition): boolean {
+    if (!this.isPositionInRoom(pos)) return false;
+    
+    // 检查地形
+    const terrain = Game.map.getRoomTerrain(room.name);
+    if (terrain.get(pos.x, pos.y) === TERRAIN_MASK_WALL) {
+      return false;
+    }
+    
+    // 检查是否已有建筑
+    const structures = room.lookForAt(LOOK_STRUCTURES, pos);
+    if (structures.length > 0) {
+      return false;
+    }
+    
+    // 检查是否已有建筑工地
+    const sites = room.lookForAt(LOOK_CONSTRUCTION_SITES, pos);
+    if (sites.length > 0) {
+      return false;
+    }
+    
+    return true;
+  }
+  
+  // 检查位置是否在房间范围内
+  private static isPositionInRoom(pos: RoomPosition): boolean {
+    return pos.x >= 1 && pos.x <= 48 && pos.y >= 1 && pos.y <= 48;
+  }
+  
+  // 根据RCL获取最大Extension数量
+  private static getMaxExtensionsForRCL(rcl: number): number {
+    const extensionLimits = [0, 0, 5, 10, 20, 30, 40, 50, 60];
+    return extensionLimits[Math.min(rcl, 8)] || 0;
+  }
+  
+  // 建设矿点容器 - 优化版本使用miningSpots
+  private static buildSourceContainers(room: Room): void {
+    const roomMemory = Memory.rooms[room.name];
+    if (!roomMemory || !roomMemory.miningSpots) {
+      console.log(`[建筑管理] 房间 ${room.name} 没有miningSpots数据，跳过容器规划`);
+      return;
+    }
 
-          // 检查位置是否合适
-          if (pos.isNearTo(source) && !pos.isEqualTo(source.pos)) {
-            const creepsAtPos = room.lookForAt(LOOK_CREEPS, pos);
-            const structuresAtPos = room.lookForAt(LOOK_STRUCTURES, pos);
-            const constructionSitesAtPos = room.lookForAt(LOOK_CONSTRUCTION_SITES, pos);
+    const sources = room.find(FIND_SOURCES);
+    const containers = room.find(FIND_STRUCTURES, {
+      filter: s => s.structureType === STRUCTURE_CONTAINER
+    });
 
-            if (creepsAtPos.length === 0 &&
-                structuresAtPos.length === 0 &&
-                constructionSitesAtPos.length === 0) {
-              positions.push(pos);
+    console.log(`[建筑管理] 当前有 ${containers.length} 个容器，${sources.length} 个矿点`);
+    
+    // 为每个矿点最多建造一个容器
+    if (containers.length < sources.length) {
+      for (let i = 0; i < sources.length; i++) {
+        const source = sources[i];
+        
+        // 检查该矿点是否已有容器或正在建造的容器
+        const nearbyContainer = containers.find(c => c.pos.isNearTo(source));
+        const nearbyConstructionSite = room.find(FIND_MY_CONSTRUCTION_SITES, {
+          filter: site => site.structureType === STRUCTURE_CONTAINER && site.pos.isNearTo(source)
+        });
+        
+        if (!nearbyContainer && nearbyConstructionSite.length === 0) {
+          // 从miningSpots获取最优位置
+          const containerPos = this.getContainerPositionFromMiningSpots(room, source, i);
+          if (containerPos) {
+            const result = room.createConstructionSite(containerPos.x, containerPos.y, STRUCTURE_CONTAINER);
+            if (result === OK) {
+              console.log(`[建筑管理] 在矿点${i} (${source.pos.x},${source.pos.y}) 的最优位置 (${containerPos.x},${containerPos.y}) 创建容器`);
+              return; // 一次只建一个
+            } else {
+              console.log(`[建筑管理] 创建容器失败: ${result}`);
             }
           }
         }
       }
     }
-
-    if (positions.length > 0) {
-      // 选择距离矿点最近的位置
-      return positions.reduce((best, current) => {
-        return current.getRangeTo(source) < best.getRangeTo(source) ? current : best;
-      });
-    }
   }
-
-  return null;
-}
-
-// 更新道路规划
-export function updateRoadPlanning(room: Room): void {
-  // 分析 Creep 移动路径，找出高频路径
-  const highTrafficPaths = analyzeCreepMovement(room);
-
-  // 为高频路径建造道路
-  for (const path of highTrafficPaths) {
-    if (shouldBuildRoad(room, path)) {
-      room.createConstructionSite(path.x, path.y, STRUCTURE_ROAD);
+  
+  // 从miningSpots为指定矿点获取预计算的最优容器位置
+  private static getContainerPositionFromMiningSpots(room: Room, source: Source, sourceIndex: number): RoomPosition | null {
+    const roomMemory = Memory.rooms[room.name];
+    if (!roomMemory || !roomMemory.miningSpots || roomMemory.miningSpots.length === 0) {
+      console.log(`[建筑管理] miningSpots数据为空，回退到传统方法`);
+      return this.findBestContainerPositionFallback(room, source);
     }
+
+    // miningSpots现在按矿点顺序存储，直接取对应索引的位置
+    if (sourceIndex < roomMemory.miningSpots.length) {
+      const spotStr = roomMemory.miningSpots[sourceIndex];
+      
+      try {
+        const [x, y] = spotStr.split(',').map(Number);
+        const pos = new RoomPosition(x, y, room.name);
+        
+        // 验证位置确实与当前矿点相邻且可建造
+        if (pos.isNearTo(source) && this.canBuildAt(room, pos)) {
+          console.log(`[建筑管理] 使用预计算的矿点${sourceIndex}最优容器位置: (${x},${y})`);
+          return pos;
+        } else {
+          console.log(`[建筑管理] 预计算位置(${x},${y})不可用，矿点${sourceIndex}使用传统方法`);
+        }
+      } catch (error) {
+        console.log(`[建筑管理] 解析矿点${sourceIndex}的miningSpot位置失败: ${spotStr}`);
+      }
+    } else {
+      console.log(`[建筑管理] 矿点索引${sourceIndex}超出miningSpots范围(${roomMemory.miningSpots.length})`);
+    }
+
+    // 如果预计算位置不可用，回退到传统方法
+    return this.findBestContainerPositionFallback(room, source);
   }
-}
-
-// 分析 Creep 移动路径
-function analyzeCreepMovement(room: Room): RoomPosition[] {
-  const creeps = room.find(FIND_MY_CREEPS);
-  const pathCounts = new Map<string, number>();
-
-  // 统计每个位置的访问频率
-  for (const creep of creeps) {
-    if ((creep.memory as any).lastPos) {
-      const path = getPathBetween((creep.memory as any).lastPos, creep.pos);
-      for (const pos of path) {
-        const key = `${pos.x},${pos.y}`;
-        pathCounts.set(key, (pathCounts.get(key) || 0) + 1);
+  
+  // 备用容器位置查找方法（保留原逻辑作为后备）
+  private static findBestContainerPositionFallback(room: Room, source: Source): RoomPosition | null {
+    const positions: RoomPosition[] = [];
+    
+    // 在矿点周围找到所有可用位置
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        if (dx === 0 && dy === 0) continue; // 跳过矿点本身
+        
+        const pos = new RoomPosition(source.pos.x + dx, source.pos.y + dy, room.name);
+        if (this.canBuildAt(room, pos)) {
+          positions.push(pos);
+        }
       }
     }
-
-    // 记录当前位置
-    (creep.memory as any).lastPos = { x: creep.pos.x, y: creep.pos.y };
+    
+    if (positions.length === 0) return null;
+    
+    // 选择距离spawn最近的位置
+    const spawn = room.find(FIND_MY_SPAWNS)[0];
+    if (spawn) {
+      return positions.reduce((best, current) => {
+        const bestDist = best.getRangeTo(spawn);
+        const currentDist = current.getRangeTo(spawn);
+        return currentDist < bestDist ? current : best;
+      });
+    }
+    
+    return positions[0];
   }
 
-  // 找出高频路径（访问次数 > 3 的位置）
-  const highTrafficPositions: RoomPosition[] = [];
-  for (const [key, count] of pathCounts) {
-    if (count > 3) {
-      const [x, y] = key.split(',').map(Number);
-      highTrafficPositions.push(new RoomPosition(x, y, room.name));
+  // 建设主要道路网络
+  private static buildMainRoadNetwork(room: Room): void {
+    const spawn = room.find(FIND_MY_SPAWNS)[0];
+    if (!spawn) return;
+    
+    const controller = room.controller;
+    const sources = room.find(FIND_SOURCES);
+    
+    // 建设到控制器的道路
+    if (controller && spawn.pos.getRangeTo(controller) > 3) {
+      this.buildRoadToTarget(room, spawn.pos, controller.pos, 'controller');
+    }
+    
+    // 建设到各个矿点的道路
+    for (const source of sources) {
+      if (spawn.pos.getRangeTo(source) > 3) {
+        this.buildRoadToTarget(room, spawn.pos, source.pos, 'source');
+      }
     }
   }
-
-  return highTrafficPositions;
+  
+  // 建设到目标的道路
+  private static buildRoadToTarget(room: Room, from: RoomPosition, to: RoomPosition, targetType: string): void {
+    const path = from.findPathTo(to, {
+      ignoreCreeps: true,
+      swampCost: 1,
+      plainCost: 1
+    });
+    
+    if (path.length === 0) return;
+    
+    // 只建设路径的一部分，避免过度建设
+    const segmentLength = Math.min(path.length, 5);
+    let builtCount = 0;
+    
+    for (let i = 0; i < segmentLength && builtCount < 2; i++) {
+      const step = path[i];
+      const pos = new RoomPosition(step.x, step.y, room.name);
+      
+      if (this.shouldBuildRoadAt(room, pos)) {
+        const result = room.createConstructionSite(pos.x, pos.y, STRUCTURE_ROAD);
+        if (result === OK) {
+          console.log(`[建筑管理] 在通往${targetType}的路径上建设道路 (${pos.x},${pos.y})`);
+          builtCount++;
+        }
+      }
+    }
+  }
+  
+  // 判断是否应该在此位置建设道路
+  private static shouldBuildRoadAt(room: Room, pos: RoomPosition): boolean {
+    if (!this.canBuildAt(room, pos)) return false;
+    
+    // 不在棋盘布局区域内建设道路（那里有自己的道路规划）
+    const spawn = room.find(FIND_MY_SPAWNS)[0];
+    if (spawn && spawn.pos.getRangeTo(pos) <= 8) {
+      return false; // 棋盘布局会处理这个区域
+    }
+    
+    return true;
+  }
 }
 
-// 获取两点间的路径
-function getPathBetween(from: { x: number, y: number }, to: RoomPosition): RoomPosition[] {
-  const path: RoomPosition[] = [];
-  const dx = Math.sign(to.x - from.x);
-  const dy = Math.sign(to.y - from.y);
-
-  let currentX = from.x;
-  let currentY = from.y;
-
-  // 简单的直线路径算法
-  while (currentX !== to.x || currentY !== to.y) {
-    if (currentX !== to.x) {
-      currentX += dx;
-      path.push(new RoomPosition(currentX, currentY, to.roomName));
-    }
-    if (currentY !== to.y) {
-      currentY += dy;
-      path.push(new RoomPosition(currentX, currentY, to.roomName));
-    }
-  }
-
-  return path;
+// 兼容性导出函数（保持向后兼容）
+export function updateBuildingLayout(room: Room): void {
+  BuildingLayoutManager.updateBuildingLayout(room);
 }
 
-// 判断是否应该建造道路
-function shouldBuildRoad(room: Room, position: RoomPosition): boolean {
-  // 检查位置是否已经有道路
-  const structures = room.lookForAt(LOOK_STRUCTURES, position);
-  if (structures.some(s => s.structureType === STRUCTURE_ROAD)) {
-    return false;
-  }
-
-  // 检查位置是否被其他建筑占用
-  if (structures.length > 0) {
-    return false;
-  }
-
-  // 检查位置是否被 Creep 占用
-  const creeps = room.lookForAt(LOOK_CREEPS, position);
-  if (creeps.length > 0) {
-    return false;
-  }
-
-  // 检查是否有足够的能量建造道路
-  if (room.energyAvailable < 300) {
-    return false;
-  }
-
-  return true;
+// 更新道路规划（兼容性函数）
+export function updateRoadPlanning(_room: Room): void {
+  // 现在由BuildingLayoutManager.buildMainRoadNetwork处理
+  console.log(`[建筑管理] 道路规划功能已集成到智能布局管理器中`);
 }

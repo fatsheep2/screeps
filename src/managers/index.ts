@@ -5,3 +5,4 @@ export * from './buildingManager';
 export * from './spawnManager';
 export * from './combatManager';
 export * from './attackManager';
+export * from './productionManager';
