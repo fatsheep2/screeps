@@ -13,16 +13,8 @@ export class RoleWarrior {
       return;
     }
 
-    // 寻找敌人
-    const target = this.findTarget(creep);
-
-    if (target) {
-      // 攻击敌人
-      this.attack(creep, target);
-    } else {
-      // 没有敌人时，移动到指定位置或巡逻
-      this.patrol(creep);
-    }
+    // 平时跟随队长移动，保持队形
+    this.followLeader(creep);
   }
 
   // 处理攻击任务
@@ -30,74 +22,56 @@ export class RoleWarrior {
     const targetRoom = creep.memory.attackTarget;
     if (!targetRoom) return;
 
-    // 第一步：检查是否到达目标房间
+    // 检查是否到达目标房间
     if (creep.room.name !== targetRoom) {
-      // 还没到达目标房间，继续移动
-      console.log(`[战士${creep.name}] 还没到达目标房间 ${targetRoom}，当前在房间 ${creep.room.name}，继续移动`);
-      this.moveToTargetRoom(creep, targetRoom);
+      // 还没到达目标房间，跟随队长移动
+      this.followLeader(creep);
       return;
     }
 
-    // 第二步：已经到达目标房间，检查小队集结状态
-    console.log(`[战士${creep.name}] 🎉 已到达目标房间 ${targetRoom}！检查小队集结状态`);
-
-    if (this.checkSquadAssembly(creep)) {
-      // 小队集结完成，开始执行战斗逻辑
-      console.log(`[战士${creep.name}] 小队集结完成！开始执行战斗逻辑`);
-      this.executeCombatLogic(creep);
-    } else {
-      // 等待其他队员集结
-      console.log(`[战士${creep.name}] 等待其他队员集结...`);
-      this.waitForAssembly(creep);
-    }
+    // 已经到达目标房间，开始执行战斗逻辑
+    console.log(`[战士${creep.name}] 🎉 已到达目标房间 ${targetRoom}！开始执行战斗逻辑`);
+    this.executeCombatLogic(creep);
   }
 
-  // 检查小队集结状态
-  private static checkSquadAssembly(creep: Creep): boolean {
-    if (!creep.memory.squadId || !Memory.combatSquads || !Memory.combatSquads[creep.memory.squadId]) {
-      console.log(`[战士${creep.name}] 没有战斗小组信息，无法检查集结状态`);
-      return false;
+  // 跟随队长移动
+  private static followLeader(creep: Creep): void {
+    if (!creep.memory.squadId || !Memory.combatSquads) {
+      creep.say('❌ 无小队');
+      return;
     }
 
     const squad = Memory.combatSquads[creep.memory.squadId];
-    const targetRoom = creep.memory.attackTarget;
-
-    if (!targetRoom) return false;
-
-    // 检查所有队员是否都在目标房间
-    for (const [role, memberName] of Object.entries(squad.members)) {
-      if (!memberName) continue;
-
-      const member = Game.creeps[memberName];
-      if (!member) {
-        console.log(`[战士${creep.name}] 队员 ${memberName} 不存在`);
-        continue;
-      }
-
-      if (member.room.name !== targetRoom) {
-        console.log(`[战士${creep.name}] 队员 ${memberName} (${role}) 还没到达目标房间，当前在 ${member.room.name}`);
-        return false;
-      }
+    if (!squad) {
+      creep.say('❌ 小队不存在');
+      return;
     }
 
-    // 所有队员都在目标房间，集结完成
-    console.log(`[战士${creep.name}] 🎯 所有队员都已到达目标房间，集结完成！`);
-    return true;
-  }
+    // 移除集合标志检查，无条件跟随队长
+    // 获取队长（坦克）
+    const leaderName = squad.members.tank;
+    if (!leaderName) {
+      creep.say('❌ 无队长');
+      return;
+    }
 
-  // 等待集结
-  private static waitForAssembly(creep: Creep): void {
-    // 在房间中心附近等待，避免被敌人攻击
-    const centerPos = new RoomPosition(25, 25, creep.room.name);
+    const leader = Game.creeps[leaderName];
+    if (!leader) {
+      creep.say('❌ 队长不存在');
+      return;
+    }
 
-    if (creep.pos.getRangeTo(centerPos) > 5) {
-      creep.moveTo(centerPos, {
-        visualizePathStyle: { stroke: '#ffff00' },
-        maxRooms: 1
+    // 检查与队长的距离
+    const distanceToLeader = creep.pos.getRangeTo(leader);
+
+    if (distanceToLeader > 2) {
+      // 距离队长超过2格，移动到队长附近
+      creep.moveTo(leader, {
+        visualizePathStyle: { stroke: '#ff0000' },
+        reusePath: 5
       });
-      creep.say('⏳ 等待集结');
     } else {
-      creep.say('⏳ 等待集结');
+      // 距离队长在2格以内，原地等待
     }
   }
 
@@ -112,25 +86,6 @@ export class RoleWarrior {
       // 没有敌人，等待或搜索
       creep.memory.working = false;
       this.searchForEnemies(creep);
-    }
-  }
-
-  // 移动到目标房间
-  private static moveToTargetRoom(creep: Creep, targetRoom: string): void {
-    console.log(`[战士${creep.name}] 向目标房间 ${targetRoom} 移动，当前在房间 ${creep.room.name}`);
-
-    // 直接移动到目标房间的中心位置
-    const targetPos = new RoomPosition(25, 25, targetRoom);
-    const moveResult = creep.moveTo(targetPos, {
-      visualizePathStyle: { stroke: '#ff0000' }
-    });
-
-    if (moveResult === OK) {
-      creep.say('🚀 向目标房间移动');
-      console.log(`[战士${creep.name}] 成功设置移动到目标房间 ${targetRoom}`);
-    } else {
-      creep.say('❌ 移动失败');
-      console.log(`[战士${creep.name}] 移动到目标房间失败: ${moveResult}`);
     }
   }
 
@@ -150,8 +105,8 @@ export class RoleWarrior {
       return;
     }
 
-    // 没有发现敌人，在房间中巡逻
-    this.patrol(creep);
+    // 没有发现敌人，原地等待
+    creep.say('⏳ 等待敌人');
   }
 
   // 寻找攻击目标
@@ -217,30 +172,6 @@ export class RoleWarrior {
           creep.say('🏃 撤退');
         }
       }
-    }
-  }
-
-  // 巡逻逻辑
-  private static patrol(creep: Creep): void {
-    // 如果没有指定巡逻点，随机移动
-    if (!creep.memory.patrolPoint) {
-      creep.memory.patrolPoint = {
-        x: Math.floor(Math.random() * 50),
-        y: Math.floor(Math.random() * 50)
-      };
-    }
-
-    const patrolPos = new RoomPosition(
-      creep.memory.patrolPoint.x,
-      creep.memory.patrolPoint.y,
-      creep.room.name
-    );
-
-    // 到达巡逻点后重新设置
-    if (creep.pos.isNearTo(patrolPos)) {
-      delete creep.memory.patrolPoint;
-    } else {
-      creep.moveTo(patrolPos);
     }
   }
 }

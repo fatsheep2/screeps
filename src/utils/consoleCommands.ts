@@ -395,6 +395,178 @@ export function forceUpdateSquad(squadId: string): void {
   }
 }
 
+// 任务管理命令
+export function showTasks(roomName?: string): void {
+  if (!roomName) {
+    roomName = Object.keys(Game.rooms)[0];
+  }
+
+  const room = Game.rooms[roomName];
+  if (!room) {
+    console.log(`房间 ${roomName} 不存在`);
+    return;
+  }
+
+  const roomMemory = room.memory;
+  if (!roomMemory || !roomMemory.tasks) {
+    console.log(`房间 ${roomName} 没有任务`);
+    return;
+  }
+
+  const tasks = roomMemory.tasks;
+  const taskCount = Object.keys(tasks).length;
+
+  console.log(`房间 ${roomName} 共有 ${taskCount} 个任务:`);
+
+  Object.values(tasks).forEach((task: any, index: number) => {
+    const status = task.status || 'unknown';
+    const assignedTo = task.assignedTo || '未分配';
+    const type = task.type || 'unknown';
+    const priority = task.priority || 'normal';
+
+    console.log(`${index + 1}. [${status}] ${type} (${priority}) - 分配给: ${assignedTo}`);
+    if (task.harvesterId) {
+      console.log(`   矿工ID: ${task.harvesterId}`);
+    }
+    if (task.targetId) {
+      console.log(`   目标ID: ${task.targetId}`);
+    }
+  });
+}
+
+export function cleanupTasks(roomName?: string): void {
+  if (!roomName) {
+    roomName = Object.keys(Game.rooms)[0];
+  }
+
+  const room = Game.rooms[roomName];
+  if (!room) {
+    console.log(`房间 ${roomName} 不存在`);
+    return;
+  }
+
+  try {
+    const { getRoomTaskManager } = require('../managers/taskManager');
+    const taskManager = getRoomTaskManager(roomName);
+
+    if (taskManager && typeof taskManager.cleanupTasks === 'function') {
+      // 调用任务管理器的清理方法
+      (taskManager as any).cleanupTasks();
+      console.log(`房间 ${roomName} 任务清理完成`);
+    } else {
+      console.log(`任务管理器不可用`);
+    }
+  } catch (error) {
+    console.log(`清理任务时发生错误: ${error}`);
+  }
+}
+
+export function forceAssignTasks(roomName?: string): void {
+  if (!roomName) {
+    roomName = Object.keys(Game.rooms)[0];
+  }
+
+  const room = Game.rooms[roomName];
+  if (!room) {
+    console.log(`房间 ${roomName} 不存在`);
+    return;
+  }
+
+  try {
+    const { getRoomTaskManager } = require('../managers/taskManager');
+    const taskManager = getRoomTaskManager(roomName);
+
+    if (taskManager) {
+      // 强制扫描房间生成任务
+      taskManager.scanRoomForTasks();
+
+      // 尝试为所有搬运工分配任务
+      const carriers = room.find(FIND_MY_CREEPS, {
+        filter: (c) => c.memory.role === 'carrier'
+      });
+
+      let assignedCount = 0;
+      carriers.forEach(carrier => {
+        const result = taskManager.assignTask(carrier);
+        if (result.success) {
+          assignedCount++;
+          console.log(`搬运工 ${carrier.name} 分配到任务: ${result.task?.type}`);
+        }
+      });
+
+      console.log(`房间 ${roomName} 强制分配完成，${assignedCount}/${carriers.length} 个搬运工分配到任务`);
+    } else {
+      console.log(`任务管理器不可用`);
+    }
+  } catch (error) {
+    console.log(`强制分配任务时发生错误: ${error}`);
+  }
+}
+
+export function showTaskAssignmentStatus(roomName?: string): void {
+  if (!roomName) {
+    roomName = Object.keys(Game.rooms)[0];
+  }
+
+  const room = Game.rooms[roomName];
+  if (!room) {
+    console.log(`房间 ${roomName} 不存在`);
+    return;
+  }
+
+  console.log(`=== 房间 ${roomName} 任务分配状态 ===`);
+
+  // 显示搬运工状态
+  const carriers = room.find(FIND_MY_CREEPS, {
+    filter: (c) => c.memory.role === 'carrier'
+  });
+
+  console.log(`\n搬运工状态 (共 ${carriers.length} 个):`);
+  carriers.forEach((carrier, index) => {
+    const hasTask = carrier.memory.currentTaskId ? '✅' : '❌';
+    const isWorking = carrier.memory.working ? '工作中' : '空闲';
+    const energy = carrier.store.getUsedCapacity(RESOURCE_ENERGY);
+    const capacity = carrier.store.getCapacity(RESOURCE_ENERGY);
+
+    console.log(`  ${index + 1}. ${carrier.name} ${hasTask} 任务: ${carrier.memory.currentTaskId || '无'} | 状态: ${isWorking} | 能量: ${energy}/${capacity}`);
+  });
+
+  // 显示任务状态
+  const roomMemory = room.memory;
+  if (roomMemory && roomMemory.tasks) {
+    const tasks = roomMemory.tasks;
+    const taskCount = Object.keys(tasks).length;
+
+    console.log(`\n任务状态 (共 ${taskCount} 个):`);
+
+    const pendingTasks = Object.values(tasks).filter((t: any) => t.status === 'pending');
+    const assignedTasks = Object.values(tasks).filter((t: any) => t.status === 'assigned');
+    const inProgressTasks = Object.values(tasks).filter((t: any) => t.status === 'in_progress');
+
+    console.log(`  待分配: ${pendingTasks.length} | 已分配: ${assignedTasks.length} | 进行中: ${inProgressTasks.length}`);
+
+    if (pendingTasks.length > 0) {
+      console.log(`\n待分配任务:`);
+      pendingTasks.forEach((task: any, index: number) => {
+        console.log(`  ${index + 1}. ${task.type} (${task.priority}) - ${task.id}`);
+        if (task.harvesterId) {
+          console.log(`     矿工ID: ${task.harvesterId}`);
+        }
+      });
+    }
+
+    if (assignedTasks.length > 0) {
+      console.log(`\n已分配任务:`);
+      assignedTasks.forEach((task: any, index: number) => {
+        const assignedTo = task.assignedTo || '未知';
+        console.log(`  ${index + 1}. ${task.type} (${task.priority}) - ${task.id} -> ${assignedTo}`);
+      });
+    }
+  } else {
+    console.log(`\n没有任务数据`);
+  }
+}
+
 // 显示帮助信息
 export function help(): void {
   console.log('🎮 攻击系统控制台命令:');
@@ -408,6 +580,10 @@ export function help(): void {
   console.log('  showCombatSquads() - 显示战斗小组状态');
   console.log('  assessRoom(roomName) - 评估房间攻击难度');
   console.log('  forceRetreat() - 强制撤退所有攻击任务');
+  console.log('  showTasks(roomName) - 查看房间任务');
+  console.log('  cleanupTasks(roomName) - 清理房间过期任务');
+  console.log('  forceAssignTasks(roomName) - 强制扫描房间并分配搬运工任务');
+  console.log('  showTaskAssignmentStatus(roomName) - 查看房间任务分配状态');
   console.log('  help() - 显示此帮助信息');
   console.log('');
   console.log('💡 使用示例:');

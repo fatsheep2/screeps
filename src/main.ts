@@ -24,6 +24,10 @@ declare global {
   var createSquad: typeof ConsoleCommands.createSquad;
   var refillSquad: typeof ConsoleCommands.refillSquad;
   var forceUpdateSquad: typeof ConsoleCommands.forceUpdateSquad;
+  var showTasks: typeof ConsoleCommands.showTasks;
+  var cleanupTasks: typeof ConsoleCommands.cleanupTasks;
+  var forceAssignTasks: typeof ConsoleCommands.forceAssignTasks;
+  var showTaskAssignmentStatus: typeof ConsoleCommands.showTaskAssignmentStatus;
 
   // 暴露攻击管理器函数
   var manualAttack: (sourceRoom: Room, targetRoom: string) => string | null;
@@ -48,6 +52,10 @@ global.forceAttack = ConsoleCommands.forceAttack;
 global.createSquad = ConsoleCommands.createSquad;
 global.refillSquad = ConsoleCommands.refillSquad;
 global.forceUpdateSquad = ConsoleCommands.forceUpdateSquad;
+global.showTasks = ConsoleCommands.showTasks;
+global.cleanupTasks = ConsoleCommands.cleanupTasks;
+global.forceAssignTasks = ConsoleCommands.forceAssignTasks;
+global.showTaskAssignmentStatus = ConsoleCommands.showTaskAssignmentStatus;
 
 // 暴露攻击管理器函数到全局
 global.manualAttack = manualAttack;
@@ -67,6 +75,24 @@ export const loop = ErrorMapper.wrapLoop(() => {
 
   // 清理已死亡 Creep 的内存
   cleanupDeadCreeps();
+
+  // 定期清理过期任务（每100个tick执行一次）
+  if (Game.time % 100 === 0) {
+    for (const roomName in Game.rooms) {
+      const room = Game.rooms[roomName];
+      if (room.controller && room.controller.my) {
+        try {
+          const { getRoomTaskManager } = require('./managers/taskManager');
+          const taskManager = getRoomTaskManager(roomName);
+          if (taskManager && typeof (taskManager as any).cleanupTasks === 'function') {
+            (taskManager as any).cleanupTasks();
+          }
+        } catch (error) {
+          // 忽略错误
+        }
+      }
+    }
+  }
 
   // 遍历每个房间
   for (const roomName in Game.rooms) {

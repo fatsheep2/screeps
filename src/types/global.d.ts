@@ -15,6 +15,7 @@ declare global {
     carriers: number;
     miningSpots: string[]; // 记录可用的采矿点
     totalAvailableSpots: number; // 记录总可用空地数量
+    tasks?: { [taskId: string]: any }; // 任务系统
   }
 
   interface CreepMemory {
@@ -30,6 +31,9 @@ declare global {
     patrolPoint?: { x: number, y: number }; // 巡逻点
     attackTarget?: string; // 攻击目标房间
     attackTaskId?: string; // 攻击任务ID
+    isLeader?: boolean;    // 是否为队长
+    currentTaskId?: string; // 当前执行的任务ID
+    testMoveToRoom?: string; // 测试用：目标房间名称
   }
 
   // 战斗小组内存结构
@@ -49,6 +53,7 @@ declare global {
     formationCenter?: { x: number; y: number }; // 列队中心位置
     moveTarget?: { x: number; y: number }; // 编组移动目标
     lastMoveTime?: number; // 最后移动时间
+    isAssembling?: boolean; // 是否正在集合
   }
 
   // 攻击任务内存结构

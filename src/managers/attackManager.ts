@@ -195,6 +195,9 @@ function coordinateSquadsMovement(task: AttackTask): void {
         member.say('🚀 出击');
       }
     }
+
+    // 移除集合标志设置，因为队员不再检查这个标志
+    // squad.isAssembling = true;
   }
 }
 
@@ -228,6 +231,12 @@ export function updateAttackTasks(): void {
         // console.log(`[攻击管理] 任务 ${taskId} 处于交战状态，执行攻击`);
         // 交战阶段：执行攻击逻辑
         executeAttackTask(taskId);
+
+        // 检查是否应该撤退
+        if (shouldRetreat(task)) {
+          task.status = 'retreating';
+          console.log(`[攻击管理] 任务 ${taskId} 开始撤退`);
+        }
         break;
 
               case 'retreating':
@@ -256,15 +265,36 @@ function checkTaskProgress(task: AttackTask): void {
     const squad = Memory.combatSquads[squadId];
     if (!squad) continue;
 
-    // 检查小组成员是否都在目标房间
-    const membersInTargetRoom = Object.values(squad.members).every(memberName => {
-      if (!memberName) return false;
-      const member = Game.creeps[memberName];
-      return member && member.room.name === task.targetRoom;
-    });
+    // 获取队长（坦克）
+    const leaderName = squad.members.tank;
+    if (!leaderName) continue;
 
-    if (!membersInTargetRoom) {
+    const leader = Game.creeps[leaderName];
+    if (!leader) continue;
+
+    // 检查队长是否在目标房间
+    if (leader.room.name !== task.targetRoom) {
       allSquadsInTargetRoom = false;
+
+      // 队长寻找前往目标房间的路径
+      const exitDirection = leader.room.findExitTo(task.targetRoom);
+
+      if (exitDirection !== ERR_NO_PATH && exitDirection !== ERR_INVALID_ARGS) {
+        // 找到出口，计算路径长度
+        const exits = leader.room.find(exitDirection);
+        const closestExit = leader.pos.findClosestByRange(exits);
+
+        if (closestExit) {
+          // const pathLength = leader.pos.getRangeTo(closestExit);
+
+          // 移除集合标志设置，因为队员不再检查这个标志
+          // 当路径长度=2时，设置集合标志为false
+          // if (pathLength <= 2) {
+          //   squad.isAssembling = false;
+          //   console.log(`[攻击管理] 小队 ${squadId} 接近目标房间，路径长度: ${pathLength}，设置集合标志为false`);
+          // }
+        }
+      }
 
       // 检查是否有成员接近目标房间（在相邻房间）
       const membersNearTargetRoom = Object.values(squad.members).some(memberName => {
@@ -281,33 +311,35 @@ function checkTaskProgress(task: AttackTask): void {
         anySquadNearTargetRoom = true;
       }
     } else {
-      // 检查是否有小组成员正在战斗
-      const hasEngagement = Object.values(squad.members).some(memberName => {
+      // 队长已经在目标房间，检查其他队员
+      const membersInTargetRoom = Object.values(squad.members).every(memberName => {
         if (!memberName) return false;
         const member = Game.creeps[memberName];
-        return member && member.memory.working;
+        return member && member.room.name === task.targetRoom;
       });
-      if (hasEngagement) anySquadEngaging = true;
+
+      if (!membersInTargetRoom) {
+        allSquadsInTargetRoom = false;
+      } else {
+        // 所有队员都在目标房间，可以开始交战
+        // 移除集合标志设置，因为队员不再检查这个标志
+        // squad.isAssembling = false;
+        anySquadEngaging = true;
+      }
     }
   }
 
-  // 更新任务状态
-  if (allSquadsInTargetRoom && task.status === 'moving') {
+  // 根据检查结果更新任务状态
+  if (allSquadsInTargetRoom) {
+    // 所有小队都在目标房间，开始交战
     task.status = 'engaging';
-    console.log(`攻击任务 ${task.id} 进入战斗阶段，所有编组已到达目标房间`);
-  } else if (anySquadNearTargetRoom && task.status === 'moving') {
-    // 如果有编组接近目标房间，继续移动状态
-    console.log(`攻击任务 ${task.id} 编组接近目标房间，继续移动`);
-  } else if (task.status === 'moving') {
-    console.log(`攻击任务 ${task.id} 编组正在向目标房间移动中...`);
-  }
-
-  if (anySquadEngaging && task.status === 'engaging') {
-    // 检查是否应该撤退
-    if (shouldRetreat(task)) {
-      task.status = 'retreating';
-      console.log(`攻击任务 ${task.id} 开始撤退`);
-    }
+    console.log(`[攻击管理] 任务 ${task.id} 所有小队已到达目标房间，状态更新为: engaging`);
+  } else if (anySquadEngaging) {
+    // 有部分小队在交战，继续移动状态
+    console.log(`[攻击管理] 任务 ${task.id} 部分小队在交战，继续移动状态`);
+  } else if (anySquadNearTargetRoom) {
+    // 有部分小队接近目标房间，继续移动
+    console.log(`[攻击管理] 任务 ${task.id} 部分小队接近目标房间，继续移动`);
   }
 }
 

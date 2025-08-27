@@ -13,8 +13,8 @@ export function spawnCreeps(room: Room, creepCounts: Record<string, number>, has
   // 检查房间能量状态
   const roomEnergy = room.energyAvailable;
 
-  // 动态调整静态矿工数量限制
-  const miningSpots = Memory.rooms[room.name]?.miningSpots || [];
+  // 获取房间的采矿点信息
+  const miningSpots = (Memory.rooms[room.name] as any)?.miningSpots || [];
   const miningSpotsCount = miningSpots.length;
 
   const dynamicRoleLimits = {

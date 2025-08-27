@@ -36,8 +36,8 @@ export function updateMiningSpots(room: Room): void {
 
   // 存储采矿点信息和总数量
   if (Memory.rooms[room.name]) {
-    Memory.rooms[room.name].miningSpots = miningSpots;
-    Memory.rooms[room.name].totalAvailableSpots = miningSpots.length;
+    (Memory.rooms[room.name] as any).miningSpots = miningSpots;
+    (Memory.rooms[room.name] as any).totalAvailableSpots = miningSpots.length;
   }
 
 }

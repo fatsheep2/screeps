@@ -140,8 +140,8 @@ function analyzeCreepMovement(room: Room): RoomPosition[] {
 
   // 统计每个位置的访问频率
   for (const creep of creeps) {
-    if (creep.memory.lastPos) {
-      const path = getPathBetween(creep.memory.lastPos, creep.pos);
+    if ((creep.memory as any).lastPos) {
+      const path = getPathBetween((creep.memory as any).lastPos, creep.pos);
       for (const pos of path) {
         const key = `${pos.x},${pos.y}`;
         pathCounts.set(key, (pathCounts.get(key) || 0) + 1);
@@ -149,7 +149,7 @@ function analyzeCreepMovement(room: Room): RoomPosition[] {
     }
 
     // 记录当前位置
-    creep.memory.lastPos = { x: creep.pos.x, y: creep.pos.y };
+    (creep.memory as any).lastPos = { x: creep.pos.x, y: creep.pos.y };
   }
 
   // 找出高频路径（访问次数 > 3 的位置）

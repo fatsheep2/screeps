@@ -28,7 +28,6 @@ export class RoleStaticHarvester {
 
     // 在目标位置，可以工作
     creep.memory.working = true;
-    creep.say('⛏️ 工作中');
     this.startMining(creep);
   }
 
@@ -38,11 +37,13 @@ export class RoleStaticHarvester {
   }
 
   // 处理搬运需求
-  private static handleTransportation(creep: Creep, targetPos: RoomPosition): void {
+  private static handleTransportation(creep: Creep, _targetPos: RoomPosition): void {
     // 检查房间任务队列中是否已有自己的搬运任务
     const roomMemory = Memory.rooms[creep.room.name];
     if (!roomMemory || !roomMemory.tasks) {
-      roomMemory.tasks = {};
+      // 没有任务系统，等待房间管理器创建任务
+      creep.say('⏳ 等待搬运');
+      return;
     }
 
     // 查找是否已有搬运任务（包括所有状态）
@@ -50,84 +51,36 @@ export class RoleStaticHarvester {
       task.type === 'assistStaticHarvester' &&
       task.harvesterId === creep.id
     );
-    console.log("existingTask", existingTask);
 
     if (!existingTask) {
-      // 没有任务，创建一个新的搬运任务
-      const taskId = this.createTransportTask(creep, targetPos);
-      if (taskId) {
-        creep.say('📋 发布搬运任务');
-        console.log(`[静态矿工${creep.name}] 创建搬运任务: ${taskId}`);
-      }
-    } else {
-      // 已有任务，显示状态
-      const statusText = existingTask.status === 'pending' ? '⏳ 等待分配' :
-                        existingTask.status === 'assigned' ? '🚛 搬运中' :
-                        existingTask.status === 'in_progress' ? '🚛 搬运中' : '❓ 未知状态';
-      creep.say(statusText);
+      // 没有任务，等待房间管理器创建
+      creep.say('⏳ 等待搬运任务');
+      return;
+    }
 
-      // 如果任务已分配，检查搬运工是否在身边
-      if (existingTask.assignedTo && (existingTask.status === 'assigned' || existingTask.status === 'in_progress')) {
-        const assignedCarrier = Game.creeps[existingTask.assignedTo];
-        if (assignedCarrier && creep.pos.isNearTo(assignedCarrier.pos)) {
-          // 搬运工在身边，跟着走
-          const moveResult = creep.move(assignedCarrier);
-          if (moveResult === OK) {
-            console.log(`[静态矿工${creep.name}] 跟随搬运工移动`);
-          }
+    // 已有任务，显示状态
+    const statusText = existingTask.status === 'pending' ? '⏳ 等待分配' :
+                      existingTask.status === 'assigned' ? '🚛 搬运中' :
+                      existingTask.status === 'in_progress' ? '🚛 搬运中' : '❓ 未知状态';
+    creep.say(statusText);
+
+    // 如果任务已分配，检查搬运工是否在身边
+    if (existingTask.assignedTo && (existingTask.status === 'assigned' || existingTask.status === 'in_progress')) {
+      const assignedCarrier = Game.creeps[existingTask.assignedTo];
+      if (assignedCarrier && creep.pos.isNearTo(assignedCarrier.pos)) {
+        // 搬运工在身边，跟着走
+        const moveResult = creep.move(assignedCarrier);
+        if (moveResult === OK) {
+          console.log(`[静态矿工${creep.name}] 跟随搬运工移动`);
         }
       }
     }
-  }
-
-  // 创建搬运任务
-  private static createTransportTask(creep: Creep, targetPos: RoomPosition): string | null {
-    // 使用固定的任务ID，不包含时间戳，避免重复创建
-    const taskId = `${creep.room.name}_transport_${creep.id}`;
-
-    const task = {
-      id: taskId,
-      type: 'assistStaticHarvester',
-      priority: 'high',
-      status: 'pending',
-      roomName: creep.room.name,
-      createdAt: Game.time,
-      expiresAt: Game.time + 200,
-      harvesterId: creep.id,
-      targetPosition: { x: targetPos.x, y: targetPos.y },
-      harvesterPosition: { x: creep.pos.x, y: creep.pos.y },
-      assignedTo: null,
-      assignedAt: null,
-      completedAt: null,
-      errorMessage: null
-    };
-
-    // 保存到房间内存
-    if (!Memory.rooms[creep.room.name]) {
-      Memory.rooms[creep.room.name] = {
-        staticHarvesters: 0,
-        upgraders: 0,
-        builders: 0,
-        carriers: 0,
-        miningSpots: [],
-        totalAvailableSpots: 0,
-        tasks: {}
-      };
-    }
-    if (!Memory.rooms[creep.room.name].tasks) {
-      Memory.rooms[creep.room.name].tasks = {};
-    }
-
-    Memory.rooms[creep.room.name].tasks![taskId] = task;
-
-    return taskId;
   }
 
   // 分配工作地点
   private static assignWorkLocation(creep: Creep): void {
     const roomMemory = Memory.rooms[creep.room.name];
     if (!roomMemory || !roomMemory.miningSpots || roomMemory.miningSpots.length === 0) {
-      creep.say('⏳ 等待采矿点');
       return;
     }
 
@@ -168,7 +121,6 @@ export class RoleStaticHarvester {
 
           if (!hasOtherHarvester) {
             creep.memory.targetId = spot;
-            creep.say(`📍 分配到 ${spot}`);
             console.log(`静态矿工 ${creep.name} 分配到采矿点 ${spot}`);
             return;
           } else {
@@ -182,7 +134,6 @@ export class RoleStaticHarvester {
     }
 
     // 如果所有采矿点都被占用，等待
-    creep.say('⏳ 所有采矿点已满');
   }
 
   // 验证 targetId 是否仍然有效
@@ -218,7 +169,6 @@ export class RoleStaticHarvester {
         // 发现冲突，清除 targetId 并重新分配
         console.log(`静态矿工 ${creep.name} 发现采矿点冲突，重新分配`);
         delete creep.memory.targetId;
-        creep.say('⚠️ 重新分配');
       }
     } catch (error) {
       console.log(`验证静态矿工 ${creep.name} 的 targetId 时发生错误: ${error}`);
@@ -235,7 +185,6 @@ export class RoleStaticHarvester {
       if (nearestSource) {
         const harvestResult = creep.harvest(nearestSource);
         if (harvestResult === OK) {
-          creep.say('💎');
         } else if (harvestResult === ERR_NOT_IN_RANGE) {
           // 虽然到达目标位置，但可能还需要微调
           creep.moveTo(nearestSource, { visualizePathStyle: { stroke: '#ffaa00' } });
