@@ -203,8 +203,8 @@ function assignPendingTasksToCarriers(room: Room): void {
 
   // 为每个待分配的任务找一个空闲的搬运工
   for (const task of pendingTasks) {
-    // 寻找空闲的搬运工
-    const availableCarrier = carriers.find(carrier => !carrier.memory.currentTaskId);
+    // 智能选择搬运工（针对供给任务优化）
+    const availableCarrier = selectBestCarrierForTask(carriers, task as any);
 
     if (availableCarrier) {
       // 分配任务
@@ -220,6 +220,110 @@ function assignPendingTasksToCarriers(room: Room): void {
     } else {
       console.log(`[房间管理器] 没有空闲搬运工执行任务 ${task.type}:${task.id}`);
     }
+  }
+}
+
+// 智能选择最合适的搬运工执行任务
+function selectBestCarrierForTask(carriers: Creep[], task: any): Creep | null {
+  // 先过滤出空闲的搬运工
+  const availableCarriers = carriers.filter(carrier => !carrier.memory.currentTaskId);
+
+  if (availableCarriers.length === 0) {
+    return null; // 没有空闲搬运工
+  }
+
+  // 判断是否为供给任务
+  const isSupplyTask = task.type === 'supplyEnergy' ||
+                      task.type === 'deliverToSpawn' ||
+                      task.type === 'deliverToCreep';
+
+  if (!isSupplyTask) {
+    // 非供给任务，使用原有逻辑：选择第一个空闲的
+    return availableCarriers[0];
+  }
+
+  // 供给任务的智能选择逻辑
+  const requiredAmount = task.requiredAmount || 50;
+
+  // 第一优先级：寻找能量充足的搬运工
+  const energySufficientCarriers = availableCarriers.filter(carrier =>
+    carrier.store.getUsedCapacity(RESOURCE_ENERGY) >= requiredAmount
+  );
+
+  if (energySufficientCarriers.length > 0) {
+    // 有能量充足的搬运工，选择距离最近的
+    const taskPosition = getTaskPosition(task);
+    if (taskPosition) {
+      const closest = taskPosition.findClosestByPath(energySufficientCarriers);
+      if (closest) {
+        console.log(`[任务分配] 选择能量充足的搬运工 ${closest.name} (${closest.store.getUsedCapacity(RESOURCE_ENERGY)}/${requiredAmount})`);
+        return closest;
+      }
+    }
+
+    // 如果无法计算距离，选择第一个能量充足的
+    console.log(`[任务分配] 选择能量充足的搬运工 ${energySufficientCarriers[0].name}`);
+    return energySufficientCarriers[0];
+  }
+
+  // 第二优先级：没有能量充足的搬运工，选择距离最近的
+  const taskPosition = getTaskPosition(task);
+  if (taskPosition) {
+    const closest = taskPosition.findClosestByPath(availableCarriers);
+    if (closest) {
+      console.log(`[任务分配] 无充足能量搬运工，选择最近的 ${closest.name} (距离优先)`);
+      return closest;
+    }
+  }
+
+  // 最后兜底：选择第一个空闲的
+  console.log(`[任务分配] 兜底选择搬运工 ${availableCarriers[0].name}`);
+  return availableCarriers[0];
+}
+
+// 获取任务的位置信息
+function getTaskPosition(task: any): RoomPosition | null {
+  try {
+    // 尝试从不同的位置字段获取坐标
+    let x: number, y: number, roomName: string;
+
+    if (task.position) {
+      x = task.position.x;
+      y = task.position.y;
+      roomName = task.roomName;
+    } else if (task.targetPosition) {
+      x = task.targetPosition.x;
+      y = task.targetPosition.y;
+      roomName = task.roomName;
+    } else if (task.targetId) {
+      // 尝试从目标对象获取位置
+      const target = Game.getObjectById(task.targetId);
+      if (target && 'pos' in target) {
+        return (target as any).pos;
+      }
+      return null;
+    } else if (task.spawnId) {
+      // 从spawn获取位置
+      const spawn = Game.getObjectById(task.spawnId);
+      if (spawn && 'pos' in spawn) {
+        return (spawn as any).pos;
+      }
+      return null;
+    } else if (task.creepId) {
+      // 从creep获取位置
+      const creep = Game.getObjectById(task.creepId);
+      if (creep && 'pos' in creep) {
+        return (creep as any).pos;
+      }
+      return null;
+    } else {
+      return null;
+    }
+
+    return new RoomPosition(x, y, roomName);
+  } catch (error) {
+    console.log(`[任务分配] 获取任务位置失败: ${error}`);
+    return null;
   }
 }
 
