@@ -42,7 +42,6 @@ export class RoleStaticHarvester {
     const roomMemory = Memory.rooms[creep.room.name];
     if (!roomMemory || !roomMemory.tasks) {
       // 没有任务系统，等待房间管理器创建任务
-      creep.say('⏳ 等待搬运');
       return;
     }
 
@@ -54,15 +53,11 @@ export class RoleStaticHarvester {
 
     if (!existingTask) {
       // 没有任务，等待房间管理器创建
-      creep.say('⏳ 等待搬运任务');
       return;
     }
 
     // 已有任务，显示状态
-    const statusText = existingTask.status === 'pending' ? '⏳ 等待分配' :
-                      existingTask.status === 'assigned' ? '🚛 搬运中' :
-                      existingTask.status === 'in_progress' ? '🚛 搬运中' : '❓ 未知状态';
-    creep.say(statusText);
+
 
     // 如果任务已分配，检查搬运工是否在身边
     if (existingTask.assignedTo && (existingTask.status === 'assigned' || existingTask.status === 'in_progress')) {
@@ -71,10 +66,6 @@ export class RoleStaticHarvester {
         // 搬运工在身边，矿工配合pull操作
         const moveResult = creep.move(assignedCarrier);
         if (moveResult === OK) {
-          creep.say('🤝 配合搬运');
-          console.log(`[静态矿工${creep.name}] 配合搬运工${assignedCarrier.name}的pull操作`);
-        } else {
-          console.log(`[静态矿工${creep.name}] 配合pull失败: ${moveResult}`);
         }
       }
     }
@@ -99,7 +90,6 @@ export class RoleStaticHarvester {
     for (const spot of roomMemory.miningSpots) {
       // 安全检查：确保 spot 是有效的字符串格式
       if (!spot || typeof spot !== 'string' || !spot.includes(',')) {
-        console.log(`警告：发现无效的采矿点格式: ${spot}`);
         continue;
       }
 
@@ -110,7 +100,6 @@ export class RoleStaticHarvester {
 
           // 验证坐标的有效性
           if (isNaN(spotX) || isNaN(spotY) || spotX < 0 || spotX >= 50 || spotY < 0 || spotY >= 50) {
-            console.log(`警告：采矿点坐标无效: ${spot}`);
             continue;
           }
 
@@ -124,13 +113,10 @@ export class RoleStaticHarvester {
 
           if (!hasOtherHarvester) {
             creep.memory.targetId = spot;
-            console.log(`静态矿工 ${creep.name} 分配到采矿点 ${spot}`);
             return;
           } else {
-            console.log(`采矿点 ${spot} 已被其他矿工实际占据，跳过`);
           }
         } catch (error) {
-          console.log(`处理采矿点 ${spot} 时发生错误: ${error}`);
           continue;
         }
       }
@@ -145,7 +131,6 @@ export class RoleStaticHarvester {
 
     // 安全检查：确保 targetId 是有效的字符串格式
     if (typeof creep.memory.targetId !== 'string' || !creep.memory.targetId.includes(',')) {
-      console.log(`警告：静态矿工 ${creep.name} 的 targetId 格式无效: ${creep.memory.targetId}`);
       delete creep.memory.targetId;
       return;
     }
@@ -155,7 +140,6 @@ export class RoleStaticHarvester {
 
       // 验证坐标的有效性
       if (isNaN(x) || isNaN(y) || x < 0 || x >= 50 || y < 0 || y >= 50) {
-        console.log(`警告：静态矿工 ${creep.name} 的 targetId 坐标无效: ${creep.memory.targetId}`);
         delete creep.memory.targetId;
         return;
       }
@@ -170,11 +154,9 @@ export class RoleStaticHarvester {
 
       if (hasOtherHarvester) {
         // 发现冲突，清除 targetId 并重新分配
-        console.log(`静态矿工 ${creep.name} 发现采矿点冲突，重新分配`);
         delete creep.memory.targetId;
       }
     } catch (error) {
-      console.log(`验证静态矿工 ${creep.name} 的 targetId 时发生错误: ${error}`);
       delete creep.memory.targetId;
     }
   }

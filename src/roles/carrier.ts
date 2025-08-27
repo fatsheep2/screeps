@@ -7,7 +7,7 @@ export class RoleCarrier {
       creep.memory.working = false;
       creep.say('📦 收集');
       delete creep.memory.targetId;
-      delete creep.memory.currentTaskId;
+      // 不要删除currentTaskId，让搬运工保持任务分配
       // 清除徘徊计数器
       delete creep.memory.stuckCounter;
     }
@@ -16,7 +16,7 @@ export class RoleCarrier {
       creep.memory.working = true;
       creep.say('🚚 运输');
       delete creep.memory.targetId;
-      delete creep.memory.currentTaskId;
+      // 不要删除currentTaskId，让搬运工保持任务分配
       // 清除徘徊计数器
       delete creep.memory.stuckCounter;
     }
@@ -78,23 +78,42 @@ export class RoleCarrier {
   private static findMyTask(creep: Creep): Task | null {
     const roomMemory = Memory.rooms[creep.room.name];
     if (!roomMemory || !roomMemory.tasks) {
+      // 清理过期的currentTaskId
+      if (creep.memory.currentTaskId) {
+        console.log(`[搬运工${creep.name}] 房间任务系统不存在，清理currentTaskId: ${creep.memory.currentTaskId}`);
+        delete creep.memory.currentTaskId;
+      }
       return null;
     }
 
-    // 只查房间内存，消除多重数据源
+    // 首先检查当前分配的任务是否还存在
+    if (creep.memory.currentTaskId) {
+      const currentTask = roomMemory.tasks[creep.memory.currentTaskId];
+      if (!currentTask) {
+        // 当前任务已被删除，清理currentTaskId
+        console.log(`[搬运工${creep.name}] 当前任务已被删除，清理currentTaskId: ${creep.memory.currentTaskId}`);
+        delete creep.memory.currentTaskId;
+      } else if (currentTask.assignedTo === creep.id &&
+                 (currentTask.status === 'assigned' || currentTask.status === 'in_progress')) {
+        // 当前任务仍然有效
+        return currentTask;
+      } else {
+        // 任务状态或分配已改变，清理currentTaskId
+        console.log(`[搬运工${creep.name}] 任务状态已改变，清理currentTaskId: ${creep.memory.currentTaskId}`);
+        delete creep.memory.currentTaskId;
+      }
+    }
+
+    // 查找新分配的任务
     for (const taskId in roomMemory.tasks) {
       const task = roomMemory.tasks[taskId];
       if (task.assignedTo === creep.id &&
           (task.status === 'assigned' || task.status === 'in_progress')) {
 
         creep.memory.currentTaskId = task.id;
+        console.log(`[搬运工${creep.name}] 发现新任务: ${task.id}`);
         return task;
       }
-    }
-
-    // 没找到任务，清理过期的currentTaskId
-    if (creep.memory.currentTaskId) {
-      delete creep.memory.currentTaskId;
     }
 
     return null;

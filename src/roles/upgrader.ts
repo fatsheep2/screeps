@@ -16,25 +16,32 @@ export class RoleUpgrader {
         return;
       }
 
-      // 在目标位置，开始工作
+      // 在目标位置，设置为工作状态（和静态矿工一致，不再改变）
       creep.memory.working = true;
 
-      // 状态切换逻辑
-      if (creep.memory.working && creep.store[RESOURCE_ENERGY] === 0) {
-        creep.memory.working = false;
-        creep.say('🔄 需要能量');
+      // 执行升级工作
+      this.performUpgradeWork(creep);
+    }
+
+    // 执行升级工作（到达目标位置后的工作逻辑）
+    private static performUpgradeWork(creep: Creep): void {
+      // 能量状态切换逻辑
+      let shouldUpgrade = true;
+
+      if (creep.store[RESOURCE_ENERGY] === 0) {
+        shouldUpgrade = false;
       }
 
-      if (!creep.memory.working && creep.store.getFreeCapacity() === 0) {
-        creep.memory.working = true;
+      if (creep.store.getFreeCapacity() === 0) {
+        shouldUpgrade = true;
         creep.say('⚡ 升级');
       }
 
-      if (creep.memory.working) {
-        // 升级控制器
+      if (shouldUpgrade && creep.store[RESOURCE_ENERGY] > 0) {
+        // 有能量，升级控制器
         this.upgradeController(creep);
       } else {
-        // 请求能量配送
+        // 没有能量，请求配送
         this.getEnergy(creep);
       }
     }
@@ -215,13 +222,11 @@ export class RoleUpgrader {
         // 检查是否即将死亡，如果是则不请求能量
         if (creep.ticksToLive && creep.ticksToLive < 50) {
           // 即将死亡，尝试自行获取能量
-          this.getEnergyFromSources(creep);
           return;
         }
 
         // 设置能量请求标记，搬运工会看到并创建配送任务
         (creep.memory as any).requestEnergy = true;
-        creep.say('🙏 请求能量');
         console.log(`[升级者${creep.name}] 请求能量配送`);
         return;
       }
@@ -237,93 +242,13 @@ export class RoleUpgrader {
           // 等待超时，转为自行获取能量
           delete (creep.memory as any).requestEnergy;
           delete (creep.memory as any).lastRequestTime;
-          this.getEnergyFromSources(creep);
         } else {
-          creep.say('⏳ 等待配送');
         }
         return;
       }
 
       // 没有请求标记，说明是首次或自行获取模式
-      this.getEnergyFromSources(creep);
     }
 
-    private static getEnergyFromSources(creep: Creep): void {
-      // 检查房间中是否有搬运工和静态矿工
-      const carriers = creep.room.find(FIND_MY_CREEPS, {
-        filter: (c) => c.memory.role === 'carrier'
-      });
 
-      const staticHarvesters = creep.room.find(FIND_MY_CREEPS, {
-        filter: (c) => c.memory.role === 'staticHarvester'
-      });
-
-      if (carriers.length === 0 || staticHarvesters.length === 0) {
-        // 没有搬运工或静态矿工，等待基础工种建立
-        if (carriers.length === 0) {
-          creep.say('⏳ 等待搬运工');
-        } else {
-          creep.say('⏳ 等待静态矿工');
-        }
-        return;
-      }
-
-      // 获取能量的优先级顺序
-      let target: Structure | null = null;
-
-      // 1. 优先从 Storage 获取能量
-      const storage = creep.room.storage;
-      if (storage && storage.store.getUsedCapacity(RESOURCE_ENERGY) > 0) {
-        target = storage;
-        creep.say('🏪 从仓库获取');
-      }
-
-      // 2. 其次从 Container 获取能量
-      if (!target) {
-        const containers = creep.room.find(FIND_STRUCTURES, {
-          filter: (structure) => {
-            return structure.structureType === STRUCTURE_CONTAINER &&
-                   structure.store.getUsedCapacity(RESOURCE_ENERGY) > 0;
-          }
-        });
-
-        if (containers.length > 0) {
-          target = creep.pos.findClosestByPath(containers);
-          creep.say('📦 从容器获取');
-        }
-      }
-
-      // 3. 最后从 Spawn 和 Extension 获取能量（主城资源）
-      if (!target) {
-        const energyStructures = creep.room.find(FIND_STRUCTURES, {
-          filter: (structure) => {
-            return (structure.structureType === STRUCTURE_SPAWN ||
-                    structure.structureType === STRUCTURE_EXTENSION) &&
-                   structure.store.getUsedCapacity(RESOURCE_ENERGY) > 100; // 保留一些给生产
-          }
-        });
-
-        if (energyStructures.length > 0) {
-          // 选择最近的 Spawn 或 Extension
-          target = creep.pos.findClosestByPath(energyStructures);
-          creep.say('🏰 从主城获取');
-        }
-      }
-
-      // 执行获取能量
-      if (target) {
-        const result = creep.withdraw(target, RESOURCE_ENERGY);
-
-        if (result === ERR_NOT_IN_RANGE) {
-          creep.moveTo(target, {
-            visualizePathStyle: { stroke: '#ffaa00' }
-          });
-        } else if (result === OK) {
-          creep.say('⚡');
-        }
-      } else {
-        // 没有资源可获取，等待主城有资源
-        creep.say('等待资源');
-      }
-    }
   }

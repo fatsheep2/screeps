@@ -91,6 +91,12 @@ function cleanupCompletedTransportTasks(room: Room): void {
         tasksToDelete.push(task.id);
         console.log(`[房间管理器] 矿工任务完成，删除: ${task.id}`);
       }
+    } else if (task.type === 'assistStaticUpgrader') {
+      const upgrader = Game.getObjectById(task.upgraderId) as Creep;
+      if (!upgrader || upgrader.memory.working === true) {
+        tasksToDelete.push(task.id);
+        console.log(`[房间管理器] 升级者任务完成，删除: ${task.id}`);
+      }
     } else if (task.type === 'collectEnergy') {
       const target = Game.getObjectById(task.targetId);
       if (!target) {
@@ -722,7 +728,7 @@ function scanSpawnExtensionEnergyNeeds(room: Room): void {
 
     if (extensions.length > 0) {
       const nearestExtension = room.find(FIND_MY_SPAWNS)[0]?.pos.findClosestByPath(extensions);
-      
+
       if (nearestExtension) {
         const existingTask = Object.values(roomMemory.tasks).find(
           task => task.type === 'supplyEnergy' && (task as any).targetId === nearestExtension.id
@@ -792,7 +798,7 @@ function scanCreepEnergyRequests(room: Room): void {
       };
 
       console.log(`[任务系统] 创建creep能量配送任务: ${taskId} -> ${creep.name}`);
-      
+
       // 清除请求标记
       delete (creep.memory as any).requestEnergy;
       return; // 一次只处理一个请求
