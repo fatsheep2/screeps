@@ -113,6 +113,11 @@ export class RoleCarrier {
       if (!result.shouldContinue) {
         this.completeTask(creep, task);
       }
+    } else if (task.type === 'assistStaticUpgrader') {
+      const result = this.executeUpgraderTransportTask(creep, task);
+      if (!result.shouldContinue) {
+        this.completeTask(creep, task);
+      }
     } else if (task.type === 'collectEnergy') {
       const result = this.executeCollectEnergyTask(creep, task);
       if (!result.shouldContinue) {
@@ -247,6 +252,57 @@ export class RoleCarrier {
     });
 
     return { success: true, shouldContinue: true, message: '正在回到矿工身边' };
+  }
+
+  // 执行升级者搬运任务
+  private static executeUpgraderTransportTask(creep: Creep, task: any): { success: boolean; shouldContinue: boolean; message?: string } {
+    const upgrader = Game.getObjectById(task.upgraderId) as Creep;
+    if (!upgrader) {
+      console.log(`[搬运工${creep.name}] 静态升级者不存在: ${task.upgraderId}`);
+      return { success: false, shouldContinue: false, message: '静态升级者不存在' };
+    }
+
+    const targetPos = new RoomPosition(task.targetPosition.x, task.targetPosition.y, creep.room.name);
+
+    // 如果升级者已经在目标位置，任务完成
+    if (upgrader.pos.isEqualTo(targetPos)) {
+      upgrader.memory.working = true;
+      console.log(`[搬运工${creep.name}] 升级者搬运任务完成，${upgrader.name}已就位`);
+      return { success: true, shouldContinue: false, message: '升级者搬运任务完成' };
+    }
+
+    // 如果还没到达升级者位置，先到升级者旁边
+    if (!creep.pos.isNearTo(upgrader.pos)) {
+      creep.moveTo(upgrader.pos, {
+        visualizePathStyle: { stroke: '#00ffff' },
+        reusePath: 3
+      });
+      creep.say('🚶 走向升级者');
+      return { success: true, shouldContinue: true, message: '正在走向升级者' };
+    }
+
+    // 已经在升级者旁边，pull着升级者往控制器位置前进
+    creep.say('🚛 搬运升级者');
+    const pullResult = creep.pull(upgrader);
+
+    if (pullResult === OK) {
+      // 向控制器位置移动
+      const moveResult = creep.moveTo(targetPos, {
+        visualizePathStyle: { stroke: '#00ffff' },
+        reusePath: 3
+      });
+
+      if (moveResult === OK) {
+        console.log(`[搬运工${creep.name}] 成功pull升级者向控制器位置移动`);
+      } else {
+        console.log(`[搬运工${creep.name}] 移动失败: ${moveResult}`);
+      }
+
+      return { success: true, shouldContinue: true, message: '正在搬运升级者' };
+    } else {
+      console.log(`[搬运工${creep.name}] Pull升级者失败: ${pullResult}`);
+      return { success: true, shouldContinue: true, message: 'Pull失败，重试中' };
+    }
   }
 
   // 执行收集能量任务

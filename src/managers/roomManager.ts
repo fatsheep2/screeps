@@ -128,19 +128,22 @@ function updateTaskSystemWithNewManager(room: Room): void {
   // 1. 扫描静态矿工，创建搬运任务（优先级：urgent）
   scanStaticHarvestersForTransport(room);
 
-  // 2. 扫描掉落资源，创建收集任务（优先级：high）
+  // 2. 扫描静态升级者，创建搬运任务（优先级：urgent）
+  scanStaticUpgradersForTransport(room);
+
+  // 3. 扫描掉落资源，创建收集任务（优先级：high）
   scanDroppedResourcesForCollection(room);
 
-  // 3. 扫描spawn/extension能量需求（优先级：high）
+  // 4. 扫描spawn/extension能量需求（优先级：high）
   scanSpawnExtensionEnergyNeeds(room);
 
-  // 4. 扫描creep能量请求（优先级：normal）
+  // 5. 扫描creep能量请求（优先级：normal）
   scanCreepEnergyRequests(room);
 
-  // 5. 清理过期和失效任务
+  // 6. 清理过期和失效任务
   cleanupCompletedTransportTasks(room);
 
-  // 6. 主动分配任务给空闲的搬运工
+  // 7. 主动分配任务给空闲的搬运工
   assignPendingTasksToCarriers(room);
 }
 
@@ -184,8 +187,9 @@ function assignPendingTasksToCarriers(room: Room): void {
     // 同优先级时，按任务类型排序
     const typeOrder: { [key: string]: number } = {
       'assistStaticHarvester': 0,  // 矿工搬运优先
-      'transferEnergy': 1,         // 能量转移其次
-      'collectEnergy': 2           // 能量收集最后
+      'assistStaticUpgrader': 1,   // 升级者搬运其次
+      'transferEnergy': 2,         // 能量转移其次
+      'collectEnergy': 3           // 能量收集最后
     };
 
     return typeOrder[a.type] - typeOrder[b.type];
@@ -280,6 +284,78 @@ function createTransportTask(harvester: Creep): string | null {
   }
 
   Memory.rooms[harvester.room.name].tasks![task.id] = task;
+
+  return task.id;
+}
+
+// 扫描静态升级者，创建搬运任务
+function scanStaticUpgradersForTransport(room: Room): void {
+  const staticUpgraders = room.find(FIND_MY_CREEPS, {
+    filter: (c) => c.memory.role === 'upgrader' &&
+                   c.memory.targetId &&
+                   c.getActiveBodyparts(MOVE) == 0 &&
+                   c.memory.working !== true
+  });
+
+  for (const upgrader of staticUpgraders) {
+    // 检查是否已有搬运任务
+    const existingTask = Object.values(room.memory.tasks || {}).find((task: any) =>
+      task.type === 'assistStaticUpgrader' &&
+      task.upgraderId === upgrader.id
+    );
+
+    if (!existingTask) {
+      // 创建搬运任务
+      const taskId = createUpgraderTransportTask(upgrader);
+      if (taskId) {
+        console.log(`[房间管理器] 为静态升级者 ${upgrader.name} 创建搬运任务: ${taskId}`);
+      }
+    }
+  }
+}
+
+// 创建升级者搬运任务
+function createUpgraderTransportTask(upgrader: Creep): string | null {
+  if (!upgrader.memory.targetId) return null;
+
+  const [targetX, targetY] = upgrader.memory.targetId.split(',').map(Number);
+  const targetPos = new RoomPosition(targetX, targetY, upgrader.room.name);
+
+  const task = {
+    id: `${upgrader.room.name}_upgrader_transport_${upgrader.id}`,
+    type: 'assistStaticUpgrader',
+    priority: 'urgent',
+    status: 'pending',
+    roomName: upgrader.room.name,
+    createdAt: Game.time,
+    expiresAt: Game.time + 200,
+    upgraderId: upgrader.id,
+    targetPosition: { x: targetPos.x, y: targetPos.y },
+    upgraderPosition: { x: upgrader.pos.x, y: upgrader.pos.y },
+    assignedTo: null,
+    assignedAt: null,
+    completedAt: null,
+    errorMessage: null
+  };
+
+  // 保存到房间内存
+  if (!Memory.rooms[upgrader.room.name]) {
+    Memory.rooms[upgrader.room.name] = {
+      staticHarvesters: 0,
+      upgraders: 0,
+      builders: 0,
+      carriers: 0,
+      miningSpots: [],
+      totalAvailableSpots: 0,
+      tasks: {}
+    };
+  }
+
+  if (!Memory.rooms[upgrader.room.name].tasks) {
+    Memory.rooms[upgrader.room.name].tasks = {};
+  }
+
+  Memory.rooms[upgrader.room.name].tasks![task.id] = task;
 
   return task.id;
 }
