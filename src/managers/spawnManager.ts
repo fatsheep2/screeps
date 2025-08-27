@@ -1,6 +1,6 @@
 import { ROLE_LIMITS, BASE_BODY_PARTS, BODY_EXTENSIONS } from '../config/creepConfig';
 import { getBodyCost } from '../utils/creepUtils';
-import { getRecommendedBodyParts } from './productionManager';
+import { getRecommendedBodyParts, getRecommendedBodyPartsWithEnergy } from './productionManager';
 
 // 尝试生产新 Creep
 export function spawnCreeps(room: Room, creepCounts: Record<string, number>, hasBasic: boolean): void {
@@ -119,23 +119,37 @@ function getAdvancedSpawnPriorities(_room: Room, creepCounts: Record<string, num
 
 // 根据可用能量和工种数量获取最优身体部件
 function getOptimalBodyParts(role: string, availableEnergy: number, creepCounts: Record<string, number>): BodyPartConstant[] {
-  // 获取房间控制等级 - 通过room参数获取，需要修改函数签名
-  // 临时从Game.rooms获取第一个我的房间的RCL
+  // 搬运工特殊处理：直接使用实际可用能量计算
+  if (role === 'carrier') {
+    const energyBasedParts = getRecommendedBodyPartsWithEnergy(role, availableEnergy);
+    const energyBasedCost = getBodyCost(energyBasedParts);
+
+    if (energyBasedCost <= availableEnergy && energyBasedParts.length > 0) {
+      console.log(`[生产管理] 搬运工使用能量配置: ${energyBasedParts.join(',')}, 成本: ${energyBasedCost}, 容量: ${energyBasedParts.filter((p: BodyPartConstant) => p === CARRY).length * 50}`);
+      return energyBasedParts;
+    }
+
+    // 如果能量不足，回退到传统配置
+    console.log(`[生产管理] 搬运工能量不足(${energyBasedCost}>${availableEnergy})，回退到传统配置`);
+    return getCarrierOptimalParts(availableEnergy, BASE_BODY_PARTS.carrier);
+  }
+
+  // 其他工种仍使用RCL配置
   const myRooms = Object.values(Game.rooms).filter(r => r.controller?.my);
   const rcl = myRooms.length > 0 ? (myRooms[0].controller?.level || 1) : 1;
-  
+
   // 优先使用智能生产管理器的推荐配置
   const recommendedParts = getRecommendedBodyParts(role, rcl);
   const recommendedCost = getBodyCost(recommendedParts);
-  
+
   // 如果推荐配置能量充足，直接使用
   if (recommendedCost <= availableEnergy && recommendedParts.length > 0) {
     console.log(`[生产管理] 使用智能配置生产${role}: ${recommendedParts.join(',')}, 成本: ${recommendedCost}`);
     return recommendedParts;
   }
-  
+
   console.log(`[生产管理] 智能配置成本过高(${recommendedCost}>${availableEnergy})，回退到传统配置`);
-  
+
   // 回退到原有逻辑
   const baseParts = BASE_BODY_PARTS[role as keyof typeof BASE_BODY_PARTS];
   if (!baseParts) return [];
@@ -146,9 +160,7 @@ function getOptimalBodyParts(role: string, availableEnergy: number, creepCounts:
   }
 
   // 根据角色类型使用不同的升级策略
-  if (role === 'carrier') {
-    return getCarrierOptimalParts(availableEnergy, baseParts);
-  } else if (role === 'staticHarvester') {
+  if (role === 'staticHarvester') {
     return getStaticHarvesterOptimalParts(availableEnergy, baseParts);
   } else {
     return getStandardOptimalParts(availableEnergy, baseParts, creepCounts, role);

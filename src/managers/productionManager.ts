@@ -22,16 +22,16 @@ export class ProductionManager {
   // 主入口：更新房间生产计划
   public static updateProductionPlan(room: Room): void {
     console.log(`[生产管理] 开始更新房间 ${room.name} 的生产计划`);
-    
+
     const rcl = room.controller?.level || 1;
     const plan = this.calculateOptimalProductionPlan(room, rcl);
-    
+
     // 更新房间内存中的生产目标
     this.updateRoomMemoryTargets(room, plan);
-    
-    console.log(`[生产管理] 房间 ${room.name} 生产计划: 
+
+    console.log(`[生产管理] 房间 ${room.name} 生产计划:
       矿工: ${plan.staticHarvesters}
-      搬运工: ${plan.carriers} 
+      搬运工: ${plan.carriers}
       升级者: ${plan.upgraders}
       建筑者: ${plan.builders}`);
   }
@@ -40,16 +40,16 @@ export class ProductionManager {
   private static calculateOptimalProductionPlan(room: Room, rcl: number): ProductionPlan {
     const sources = room.find(FIND_SOURCES);
     const limits = this.RCL_LIMITS[rcl as keyof typeof this.RCL_LIMITS] || this.RCL_LIMITS[1];
-    
+
     // 计算最优矿工配置
     const optimalHarvesters = this.calculateOptimalHarvesters(sources, limits, rcl);
-    
+
     // 计算所需搬运工数量
     const requiredCarriers = this.calculateRequiredCarriers(room, optimalHarvesters, rcl);
-    
+
     // 计算升级者数量
     const optimalUpgraders = this.calculateOptimalUpgraders(room, rcl, limits);
-    
+
     // 计算建筑者数量
     const optimalBuilders = this.calculateOptimalBuilders(room, rcl);
 
@@ -64,16 +64,16 @@ export class ProductionManager {
   // 计算最优矿工数量和配置
   private static calculateOptimalHarvesters(sources: Source[], limits: any, rcl: number): number {
     const sourceCount = sources.length;
-    
+
     // 计算每个矿工需要的WORK部件数
     const targetWorkParts = Math.min(
-      Math.floor(this.WORK_EFFICIENCY.SOURCE_CAPACITY / 
+      Math.floor(this.WORK_EFFICIENCY.SOURCE_CAPACITY /
                 (this.WORK_EFFICIENCY.REGENERATION_TIME * this.WORK_EFFICIENCY.ENERGY_PER_TICK)),
       6 // 最多6个WORK部件就能完全采集一个矿点
     );
-    
+
     console.log(`[生产管理] RCL${rcl}: 计算每个矿工需要${targetWorkParts}个WORK部件`);
-    
+
     // 检查能量是否足够支持这样的矿工
     const workerCost = targetWorkParts * 150; // WORK + MOVE + CARRY 的基本成本
     if (workerCost <= limits.maxCreepCost) {
@@ -91,42 +91,42 @@ export class ProductionManager {
   // 计算所需搬运工数量（优化版）
   private static calculateRequiredCarriers(room: Room, _harvesterCount: number, rcl: number): number {
     const sources = room.find(FIND_SOURCES);
-    
+
     // 第一部分：矿点运输需求
     let miningCarriers = sources.length; // 每个矿点1个专职搬运工
-    
+
     // 第二部分：静态工人配送需求
     const staticWorkers = this.countStaticWorkers(room);
     const deliveryCarriers = Math.max(1, Math.ceil(staticWorkers / 4)); // 每4个静态工人1个配送工
-    
+
     // 第三部分：基础建设需求
     const baseCarriers = 1; // 至少1个处理spawn/extension补给等基础任务
-    
+
     let totalCarriers = miningCarriers + deliveryCarriers + baseCarriers;
-    
+
     // RCL调整：低级房间需要更多，高级房间效率更高
     if (rcl <= 2) {
       totalCarriers = Math.ceil(totalCarriers * 1.2); // 低级房间+20%
     } else if (rcl >= 6) {
       totalCarriers = Math.max(3, Math.ceil(totalCarriers * 0.8)); // 高级房间-20%，但至少3个
     }
-    
+
     const finalCount = Math.min(totalCarriers, 5); // 硬上限降到5个
     console.log(`[生产管理] 搬运工需求计算: 矿点${miningCarriers}+配送${deliveryCarriers}+基础${baseCarriers}=总计${finalCount}`);
-    
+
     return finalCount;
   }
-  
+
   // 统计静态工人数量（需要配送的工种）
   private static countStaticWorkers(room: Room): number {
     const staticCreeps = room.find(FIND_MY_CREEPS, {
       filter: (creep) => creep.memory.role === 'upgrader' || creep.memory.role === 'staticHarvester'
     });
-    
+
     // 加上计划中的建筑者（如果有建筑工地）
     const constructionSites = room.find(FIND_MY_CONSTRUCTION_SITES);
     const plannedBuilders = Math.min(constructionSites.length > 0 ? 2 : 0, 2);
-    
+
     return staticCreeps.length + plannedBuilders;
   }
 
@@ -134,41 +134,41 @@ export class ProductionManager {
   private static calculateOptimalUpgraders(room: Room, rcl: number, _limits: any): number {
     // 根据RCL调整升级者数量
     const baseUpgraders = Math.max(1, Math.floor(rcl / 2));
-    
+
     // 检查控制器距离
     const spawn = room.find(FIND_MY_SPAWNS)[0];
     const controller = room.controller;
-    
+
     if (spawn && controller) {
       const distance = spawn.pos.getRangeTo(controller);
       if (distance > 20) {
         return Math.max(baseUpgraders - 1, 1); // 距离远减少升级者
       }
     }
-    
+
     // 高等级房间减少升级者，专注其他任务
     if (rcl >= 6) {
       return Math.max(1, Math.floor(baseUpgraders / 2));
     }
-    
+
     return baseUpgraders;
   }
 
   // 计算最优建筑者数量
   private static calculateOptimalBuilders(room: Room, rcl: number): number {
     const constructionSites = room.find(FIND_MY_CONSTRUCTION_SITES);
-    
+
     if (constructionSites.length === 0) {
       return 0; // 没有建筑工地就不需要建筑者
     }
-    
+
     // 根据建筑工地数量和RCL决定建筑者数量
     let builders = Math.min(constructionSites.length, 2); // 最多2个建筑者
-    
+
     if (rcl <= 2) {
       builders = 1; // 低等级只要1个建筑者
     }
-    
+
     return builders;
   }
 
@@ -189,18 +189,36 @@ export class ProductionManager {
   // 平滑过渡函数，避免生产计划剧烈变化
   private static smoothTransition(current: number, target: number): number {
     const maxChange = 1; // 每次最多变化1个单位
-    
+
     if (Math.abs(current - target) <= maxChange) {
       return target;
     }
-    
+
     return current < target ? current + maxChange : current - maxChange;
   }
 
-  // 获取推荐的单位身体部件配置
+  // 获取推荐的单位身体部件配置（使用RCL上限）
   public static getRecommendedBodyParts(role: string, rcl: number): BodyPartConstant[] {
     const limits = this.RCL_LIMITS[rcl as keyof typeof this.RCL_LIMITS] || this.RCL_LIMITS[1];
-    
+
+    switch (role) {
+      case 'staticHarvester':
+        return this.getHarvesterBody(limits);
+      case 'carrier':
+        return this.getCarrierBody(limits);
+      case 'upgrader':
+        return this.getUpgraderBody(limits);
+      case 'builder':
+        return this.getBuilderBody(limits);
+      default:
+        return [WORK, CARRY, MOVE]; // 默认配置
+    }
+  }
+
+  // 获取推荐的单位身体部件配置（使用实际可用能量）
+  public static getRecommendedBodyPartsWithEnergy(role: string, availableEnergy: number): BodyPartConstant[] {
+    const limits = { maxCreepCost: availableEnergy, maxBodyParts: 50 };
+
     switch (role) {
       case 'staticHarvester':
         return this.getHarvesterBody(limits);
@@ -220,39 +238,37 @@ export class ProductionManager {
     // 目标：6个WORK部件 + 最少的MOVE和CARRY
     const maxWorkParts = Math.min(6, Math.floor(limits.maxCreepCost / 100));
     const workParts = Math.max(1, maxWorkParts);
-    
+
     const body: BodyPartConstant[] = [];
-    
+
     // 添加WORK部件
     for (let i = 0; i < workParts; i++) {
       body.push(WORK);
     }
-    
+
     // 静态矿工不需要MOVE和CARRY（会被搬运工拉到位置，能量直接掉落地面）
     // 不添加CARRY部件，让能量掉落地面由搬运工收集
-    
+
     return body;
   }
 
-  // 搬运工身体部件配置
+  // 搬运工身体部件配置（2 CARRY : 1 MOVE 比例）
   private static getCarrierBody(limits: any): BodyPartConstant[] {
-    // 目标：平衡CARRY和MOVE，快速运输
-    const maxParts = Math.floor(limits.maxCreepCost / 100);
-    const carryParts = Math.floor(maxParts / 2);
-    const moveParts = Math.floor(maxParts / 2);
-    
+    const maxCost = limits.maxCreepCost;
+    const unitCost = 150; // 2 CARRY (100) + 1 MOVE (50) = 150
+    const maxUnits = Math.floor(maxCost / unitCost);
+    const units = Math.max(1, Math.min(maxUnits, 16)); // 最多16组，避免超过50部件限制
+
     const body: BodyPartConstant[] = [];
-    
-    // 先添加CARRY部件
-    for (let i = 0; i < carryParts; i++) {
+
+    // 按比例添加部件：2 CARRY + 1 MOVE
+    for (let i = 0; i < units; i++) {
       body.push(CARRY);
-    }
-    
-    // 再添加MOVE部件
-    for (let i = 0; i < moveParts; i++) {
+      body.push(CARRY);
       body.push(MOVE);
     }
-    
+
+    console.log(`[生产管理] 搬运工身体配置: ${units}组(2CARRY+1MOVE), 总成本: ${units * unitCost}, 容量: ${units * 100}`);
     return body;
   }
 
@@ -263,16 +279,16 @@ export class ProductionManager {
     const unitCost = 200; // 1个WORK(100) + 2个CARRY(100) = 200
     const maxUnits = Math.floor(maxCost / unitCost);
     const units = Math.max(1, Math.min(maxUnits, 8)); // 最多8组，避免过度复杂
-    
+
     const body: BodyPartConstant[] = [];
-    
+
     // 按照CARRY:WORK 2:1的比例添加部件
     for (let i = 0; i < units; i++) {
       body.push(WORK);
       body.push(CARRY);
       body.push(CARRY);
     }
-    
+
     console.log(`[生产管理] 静态升级者配置: ${units}组WORK+2CARRY，总成本: ${units * unitCost}`);
     return body;
   }
@@ -299,4 +315,8 @@ export function updateProductionPlan(room: Room): void {
 
 export function getRecommendedBodyParts(role: string, rcl: number): BodyPartConstant[] {
   return ProductionManager.getRecommendedBodyParts(role, rcl);
+}
+
+export function getRecommendedBodyPartsWithEnergy(role: string, availableEnergy: number): BodyPartConstant[] {
+  return ProductionManager.getRecommendedBodyPartsWithEnergy(role, availableEnergy);
 }
