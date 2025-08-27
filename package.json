@@ -13,13 +13,15 @@
     "push-pserver": "rollup -c --environment DEST:pserver",
     "push-season": "rollup -c --environment DEST:season",
     "push-sim": "rollup -c --environment DEST:sim",
+    "push-itx": "rollup -c --environment DEST:itx",
     "test": "npm run test-unit && npm run test-integration",
     "test-unit": "mocha test/unit/**/*.ts",
     "test-integration": "npm run build && mocha test/integration/**/*.ts",
     "watch-main": "rollup -cw --environment DEST:main",
     "watch-pserver": "rollup -cw --environment DEST:pserver",
     "watch-season": "rollup -cw --environment DEST:season",
-    "watch-sim": "rollup -cw --environment DEST:sim"
+    "watch-sim": "rollup -cw --environment DEST:sim",
+    "watch-itx": "rollup -cw --environment DEST:itx"
   },
   "repository": {
     "type": "git",

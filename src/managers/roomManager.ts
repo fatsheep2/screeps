@@ -25,18 +25,21 @@ export function manageRoom(room: Room): void {
   spawnCreeps(room, creepCounts, hasBasic);
 
   // 管理战斗单位生产
-  manageCombatProduction(room);
+  manageCombatProduction(room, hasBasic);
 
   // 静态矿工管理现在由任务系统处理
 
-  // 编组战斗小组
-  organizeCombatSquads(room);
+  // 只有在有基础单位时才执行战斗相关逻辑
+  if (hasBasic) {
+    // 编组战斗小组
+    organizeCombatSquads(room);
 
-  // 更新战斗小组状态
-  updateCombatSquads(room);
+    // 更新战斗小组状态
+    updateCombatSquads(room);
 
-  // 更新攻击任务状态
-  updateAttackTasks();
+    // 更新攻击任务状态
+    updateAttackTasks();
+  }
 
   // 更新任务系统
   updateTaskSystemWithNewManager(room);

@@ -16,7 +16,12 @@ export interface CombatSquad {
 }
 
 // 管理战斗单位生产
-export function manageCombatProduction(room: Room): void {
+export function manageCombatProduction(room: Room, hasBasic: boolean = false): void {
+  // 如果没有基础单位，不生产战斗单位
+  if (!hasBasic) {
+    return;
+  }
+
   const spawns = room.find(FIND_MY_SPAWNS);
   const availableSpawn = spawns.find(spawn => !spawn.spawning);
 
