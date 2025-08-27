@@ -24,7 +24,7 @@ declare global {
     working: boolean;
     sourceIndex?: number;  // 指定采集的资源点
     targetId?: string;     // 目标ID
-    lastPos?: { x: number, y: number }; // 记录上一次位置，用于道路规划
+    lastPos?: { x: number, y: number, tick: number }; // 记录上一次位置和时间，用于检测卡住
     helpingStaticHarvester?: string; // 要帮助的静态矿工的名字
     lastExchangeTime?: number; // 记录最后一次交换完成的时间
     squadId?: string;      // 战斗小组ID
@@ -34,6 +34,7 @@ declare global {
     isLeader?: boolean;    // 是否为队长
     currentTaskId?: string; // 当前执行的任务ID
     testMoveToRoom?: string; // 测试用：目标房间名称
+    stuckCounter?: number; // 卡住计数器，用于检测是否在同一个位置徘徊
   }
 
   // 战斗小组内存结构

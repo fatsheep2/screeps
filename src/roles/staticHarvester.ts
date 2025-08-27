@@ -188,10 +188,9 @@ export class RoleStaticHarvester {
       if (nearestSource) {
         const harvestResult = creep.harvest(nearestSource);
         if (harvestResult === OK) {
-          creep.say('⛏️ 挖矿');
+          creep.say('⛏️');
         } else if (harvestResult === ERR_NOT_IN_RANGE) {
           // 静态矿工没有MOVE部件，不能移动，等待搬运工pull
-          creep.say('❌ 位置错误');
         }
       }
     }

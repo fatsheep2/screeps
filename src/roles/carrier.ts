@@ -8,6 +8,8 @@ export class RoleCarrier {
       creep.say('📦 收集');
       delete creep.memory.targetId;
       delete creep.memory.currentTaskId;
+      // 清除徘徊计数器
+      delete creep.memory.stuckCounter;
     }
 
     if (!creep.memory.working && creep.store.getFreeCapacity() === 0) {
@@ -15,7 +17,12 @@ export class RoleCarrier {
       creep.say('🚚 运输');
       delete creep.memory.targetId;
       delete creep.memory.currentTaskId;
+      // 清除徘徊计数器
+      delete creep.memory.stuckCounter;
     }
+
+    // 检查是否卡住
+    this.checkIfStuck(creep);
 
     // 从任务列表查找分配给自己的任务
     const myTask = this.findMyTask(creep);
@@ -26,6 +33,45 @@ export class RoleCarrier {
 
     // 没有任务时执行默认行为
     this.executeDefaultBehavior(creep);
+  }
+
+  // 检查搬运工是否卡住
+  private static checkIfStuck(creep: Creep): void {
+    if (!creep.memory.lastPos) {
+      creep.memory.lastPos = { x: creep.pos.x, y: creep.pos.y, tick: Game.time };
+      return;
+    }
+
+    const lastPos = creep.memory.lastPos;
+    const currentTick = Game.time;
+
+    // 如果位置相同且超过5个tick，认为卡住了
+    if (lastPos.x === creep.pos.x && lastPos.y === creep.pos.y && (currentTick - lastPos.tick) > 5) {
+      if (!creep.memory.stuckCounter) {
+        creep.memory.stuckCounter = 1;
+      } else {
+        creep.memory.stuckCounter++;
+      }
+
+      console.log(`[搬运工${creep.name}] 可能卡住了，徘徊次数: ${creep.memory.stuckCounter}`);
+
+      // 如果卡住超过3次，尝试随机移动
+      if (creep.memory.stuckCounter > 3) {
+        const randomDirection = (Math.floor(Math.random() * 8) + 1) as DirectionConstant;
+        creep.move(randomDirection);
+        creep.say('🔄 随机移动');
+        console.log(`[搬运工${creep.name}] 执行随机移动，方向: ${randomDirection}`);
+
+        // 重置徘徊计数器
+        delete creep.memory.stuckCounter;
+      }
+    } else if (lastPos.x !== creep.pos.x || lastPos.y !== creep.pos.y) {
+      // 位置发生变化，重置徘徊计数器
+      delete creep.memory.stuckCounter;
+    }
+
+    // 更新位置记录
+    creep.memory.lastPos = { x: creep.pos.x, y: creep.pos.y, tick: Game.time };
   }
 
   // 查找分配给自己的任务 - 简化为单一数据源
@@ -98,6 +144,29 @@ export class RoleCarrier {
     }
 
     delete creep.memory.currentTaskId;
+
+    // 清理相关内存
+    if (task.type === 'collectEnergy') {
+      // 对于收集任务，检查是否还有能量需要收集
+      const energyTarget = Game.getObjectById(task.targetId);
+      if (energyTarget) {
+        let remainingEnergy = 0;
+        if (task.targetType === 'dropped') {
+          remainingEnergy = (energyTarget as Resource).amount;
+        } else if (task.targetType === 'tombstone' || task.targetType === 'ruin') {
+          remainingEnergy = (energyTarget as any).store?.getUsedCapacity(RESOURCE_ENERGY) || 0;
+        } else {
+          remainingEnergy = (energyTarget as any).store?.getUsedCapacity(RESOURCE_ENERGY) || 0;
+        }
+
+        // 如果还有能量，重新创建任务
+        if (remainingEnergy > 0) {
+          console.log(`[搬运工${creep.name}] 目标还有 ${remainingEnergy} 能量，重新创建任务`);
+          // 这里可以调用任务管理器重新创建任务
+          // 暂时先不实现，避免循环创建任务
+        }
+      }
+    }
   }
 
     // 执行搬运任务
@@ -179,6 +248,7 @@ export class RoleCarrier {
 
     // 如果背包满了，去存储能量
     if (creep.store.getFreeCapacity(RESOURCE_ENERGY) === 0) {
+      console.log(`[搬运工${creep.name}] 背包已满，开始存储能量`);
       return this.storeCollectedEnergy(creep, task);
     }
 
@@ -187,6 +257,21 @@ export class RoleCarrier {
     if (!energyTarget) {
       console.log(`[搬运工${creep.name}] 能量目标不存在: ${task.targetId}`);
       return { success: false, shouldContinue: false, message: '能量目标不存在' };
+    }
+
+    // 检查能量目标是否还有能量
+    let hasEnergy = false;
+    if (task.targetType === 'dropped') {
+      hasEnergy = (energyTarget as Resource).amount > 0;
+    } else if (task.targetType === 'tombstone' || task.targetType === 'ruin') {
+      hasEnergy = (energyTarget as any).store?.getUsedCapacity(RESOURCE_ENERGY) > 0;
+    } else {
+      hasEnergy = (energyTarget as any).store?.getUsedCapacity(RESOURCE_ENERGY) > 0;
+    }
+
+    if (!hasEnergy) {
+      console.log(`[搬运工${creep.name}] 能量目标已空，任务完成`);
+      return { success: true, shouldContinue: false, message: '能量目标已空' };
     }
 
     // 如果不在目标附近，移动到目标
@@ -211,7 +296,7 @@ export class RoleCarrier {
 
     if (collectResult === OK) {
       creep.say('📦 收集');
-      console.log(`[搬运工${creep.name}] 成功收集能量`);
+      console.log(`[搬运工${creep.name}] 成功收集能量，当前背包: ${creep.store.getUsedCapacity(RESOURCE_ENERGY)}/${creep.store.getCapacity()}`);
     } else {
       console.log(`[搬运工${creep.name}] 收集能量失败: ${collectResult}`);
     }
@@ -222,10 +307,55 @@ export class RoleCarrier {
   // 存储收集到的能量
   private static storeCollectedEnergy(creep: Creep, task: any): { success: boolean; shouldContinue: boolean; message?: string } {
     // 获取存储目标
-    const storageTarget = Game.getObjectById(task.storageTargetId);
-    if (!storageTarget) {
-      console.log(`[搬运工${creep.name}] 存储目标不存在: ${task.storageTargetId}`);
-      return { success: false, shouldContinue: false, message: '存储目标不存在' };
+    let storageTarget = Game.getObjectById(task.storageTargetId);
+
+    // 如果主要存储目标不存在或已满，寻找新的存储目标
+    if (!storageTarget || (storageTarget as any).store?.getFreeCapacity(RESOURCE_ENERGY) === 0) {
+      creep.say('🔄 找新存储');
+
+      // 优先寻找主要存储建筑（container, storage）
+      const primaryTargets = creep.room.find(FIND_STRUCTURES, {
+        filter: (structure) => {
+          return (structure.structureType === STRUCTURE_CONTAINER ||
+                  structure.structureType === STRUCTURE_STORAGE) &&
+                 structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0;
+        }
+      });
+
+      // 如果没有主要存储建筑，寻找次要存储建筑
+      const secondaryTargets = creep.room.find(FIND_STRUCTURES, {
+        filter: (structure) => {
+          return (structure.structureType === STRUCTURE_SPAWN ||
+                  structure.structureType === STRUCTURE_EXTENSION ||
+                  structure.structureType === STRUCTURE_TOWER) &&
+                 structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0;
+        }
+      });
+
+      // 按优先级选择目标
+      let newTarget = null;
+      if (primaryTargets.length > 0) {
+        newTarget = creep.pos.findClosestByPath(primaryTargets);
+      } else if (secondaryTargets.length > 0) {
+        newTarget = creep.pos.findClosestByPath(secondaryTargets);
+      }
+
+      if (newTarget) {
+        // 更新任务的存储目标
+        task.storageTargetId = newTarget.id;
+        storageTarget = newTarget;
+
+        // 更新房间内存中的任务
+        const roomMemory = Memory.rooms[creep.room.name];
+        if (roomMemory && roomMemory.tasks && roomMemory.tasks[task.id]) {
+          roomMemory.tasks[task.id].storageTargetId = newTarget.id;
+        }
+
+        console.log(`[搬运工${creep.name}] 更新存储目标为: ${newTarget.structureType} ${newTarget.id}`);
+      } else {
+        console.log(`[搬运工${creep.name}] 没有可用的存储目标`);
+        return { success: false, shouldContinue: false, message: '没有可用的存储目标' };
+      }
     }
 
     // 如果不在存储目标附近，移动到目标
@@ -247,30 +377,18 @@ export class RoleCarrier {
         return { success: true, shouldContinue: false, message: '收集任务完成' };
       }
     } else if (transferResult === ERR_FULL) {
-      // 存储目标已满，寻找其他存储地点
-      creep.say('🔄 找新存储');
-      const alternativeTargets = creep.room.find(FIND_STRUCTURES, {
-        filter: (structure) => {
-          return (structure.structureType === STRUCTURE_SPAWN ||
-                  structure.structureType === STRUCTURE_EXTENSION ||
-                  structure.structureType === STRUCTURE_TOWER) &&
-                 structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0;
-        }
-      });
+      // 存储目标已满，标记为需要寻找新目标，下次执行时会重新寻找
+      console.log(`[搬运工${creep.name}] 存储目标已满: ${storageTarget.id}`);
+      // 清除当前存储目标，下次执行时会重新寻找
+      delete task.storageTargetId;
 
-      if (alternativeTargets.length > 0) {
-        const nearestTarget = creep.pos.findClosestByPath(alternativeTargets);
-        if (nearestTarget) {
-          const altTransferResult = creep.transfer(nearestTarget, RESOURCE_ENERGY);
-          if (altTransferResult === OK) {
-            creep.say('💾 转存');
-            console.log(`[搬运工${creep.name}] 转存到备用目标: ${nearestTarget.structureType}`);
-          } else if (altTransferResult === ERR_NOT_IN_RANGE) {
-            creep.moveTo(nearestTarget);
-            return { success: true, shouldContinue: true, message: '前往备用存储' };
-          }
-        }
+      // 更新房间内存中的任务
+      const roomMemory = Memory.rooms[creep.room.name];
+      if (roomMemory && roomMemory.tasks && roomMemory.tasks[task.id]) {
+        delete roomMemory.tasks[task.id].storageTargetId;
       }
+
+      return { success: true, shouldContinue: true, message: '存储目标已满，下次重新寻找' };
     } else {
       console.log(`[搬运工${creep.name}] 存储能量失败: ${transferResult}`);
     }
