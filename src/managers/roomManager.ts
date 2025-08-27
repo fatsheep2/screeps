@@ -157,11 +157,11 @@ function assignPendingTasksToCarriers(room: Room): void {
     return; // 没有待分配的任务
   }
 
-  // 按优先级排序任务 - 细化优先级系统
+  // 按优先级排序任务 - 矿工搬运优先策略
   const priorityOrder: { [key: string]: number } = {
-    'urgent': 0,    // Spawn/Extension转移
-    'high': 1,      // 矿工搬运、Tower转移、大量能量收集
-    'normal': 2,    // 普通能量收集
+    'urgent': 0,    // 矿工搬运（生产基础）
+    'high': 1,      // 大量能量收集
+    'normal': 2,    // Spawn/Extension转移、Tower转移、普通能量收集
     'low': 3        // 其他任务
   };
 
@@ -233,7 +233,7 @@ function createTransportTask(harvester: Creep): string | null {
   const task = {
     id: `${harvester.room.name}_transport_${harvester.id}`,
     type: 'assistStaticHarvester',
-    priority: 'high',
+    priority: 'urgent',
     status: 'pending',
     roomName: harvester.room.name,
     createdAt: Game.time,
@@ -418,13 +418,13 @@ function scanBuildingsForEnergyTransfer(room: Room): void {
 function createTransferEnergyTask(room: Room, source: Structure, target: StructureSpawn | StructureExtension | StructureTower | StructureContainer | StructureStorage): string | null {
   let priority: string;
 
-  // 根据目标建筑设定优先级
+  // 根据目标建筑设定优先级 - 转移优先级降低
   if (target.structureType === STRUCTURE_SPAWN || target.structureType === STRUCTURE_EXTENSION) {
-    priority = 'urgent';
+    priority = 'normal';  // 降低到normal
   } else if (target.structureType === STRUCTURE_TOWER) {
-    priority = 'high';
+    priority = 'normal';  // 降低到normal
   } else {
-    priority = 'normal';
+    priority = 'low';     // 其他建筑为low
   }
 
   const task = {

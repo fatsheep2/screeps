@@ -1,4 +1,3 @@
-import { TaskExecutor } from '../executors/taskExecutor';
 import { Task } from '../types/tasks';
 
 export class RoleCarrier {
@@ -82,12 +81,9 @@ export class RoleCarrier {
         this.completeTask(creep, task);
       }
     } else {
-      // 其他任务交给TaskExecutor处理
-      const result = TaskExecutor.executeTask(creep, task);
-      if (!result.shouldContinue) {
-        // 任务完成，清理任务
-        this.completeTask(creep, task);
-      }
+      // 未知任务类型，标记为失败
+      console.log(`[搬运工${creep.name}] 未知任务类型: ${task.type}`);
+      this.completeTask(creep, task);
     }
   }
 

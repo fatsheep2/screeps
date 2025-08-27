@@ -2,7 +2,6 @@
 export * from './roomManager';
 export * from './miningSpotManager';
 export * from './buildingManager';
-export * from './taskManager';
 export * from './spawnManager';
 export * from './combatManager';
 export * from './attackManager';
