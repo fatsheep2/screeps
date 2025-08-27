@@ -4,7 +4,6 @@ import { spawnCreeps } from './spawnManager';
 import { manageCombatProduction, organizeCombatSquads, updateCombatSquads } from './combatManager';
 import { updateAttackTasks } from './attackManager';
 import { countRoomCreeps, hasBasicCreeps } from '../utils/creepUtils';
-import { getRoomTaskManager } from './taskManager';
 import { RoleUpgrader } from '../roles/upgrader';
 import { RoleStaticHarvester } from '../roles/staticHarvester';
 import { RoleBuilder } from '../roles/builder';
@@ -49,206 +48,157 @@ export function manageRoom(room: Room): void {
   }
 }
 
-// 清理已完成的搬运任务
-function cleanupCompletedTransportTasks(room: Room, _taskManager: any): void {
+// 清理已完成的任务
+function cleanupCompletedTransportTasks(room: Room): void {
   const roomMemory = room.memory;
   if (!roomMemory || !roomMemory.tasks) return;
 
   const tasksToDelete: string[] = [];
+  const tasksToReset: string[] = [];
 
-  // 检查所有搬运任务
   Object.values(roomMemory.tasks || {}).forEach((task: any) => {
+    // 检查任务是否过期
+    if (task.expiresAt && Game.time > task.expiresAt) {
+      tasksToDelete.push(task.id);
+      console.log(`[房间管理器] 任务过期，删除: ${task.id}`);
+      return;
+    }
+
+    // 检查分配的搬运工是否还存在
+    if (task.assignedTo && (task.status === 'assigned' || task.status === 'in_progress')) {
+      const assignedCarrier = Game.getObjectById(task.assignedTo) as Creep;
+      if (!assignedCarrier) {
+        tasksToReset.push(task.id);
+        return;
+      }
+    }
+
+    // 不同类型任务的特定检查
     if (task.type === 'assistStaticHarvester') {
       const harvester = Game.getObjectById(task.harvesterId) as Creep;
-
-      // 如果矿工不存在，或者已经在工作，删除任务
       if (!harvester || harvester.memory.working === true) {
         tasksToDelete.push(task.id);
-
-        if (harvester && harvester.memory.working === true) {
-          console.log(`[房间管理器] 矿工${harvester.name}已开始工作，删除搬运任务: ${task.id}`);
-        } else if (!harvester) {
-          console.log(`[房间管理器] 矿工不存在，删除搬运任务: ${task.id}`);
-        }
-
-        // 如果任务已分配给搬运工，清除搬运工的任务ID
-        if (task.assignedTo) {
-          const assignedCarrier = Game.creeps[task.assignedTo];
-          if (assignedCarrier && assignedCarrier.memory.currentTaskId === task.id) {
-            delete assignedCarrier.memory.currentTaskId;
-            console.log(`[房间管理器] 清除搬运工${assignedCarrier.name}的任务ID`);
-          }
-        }
+        console.log(`[房间管理器] 矿工任务完成，删除: ${task.id}`);
+      }
+    } else if (task.type === 'collectEnergy') {
+      const target = Game.getObjectById(task.targetId);
+      if (!target) {
+        tasksToDelete.push(task.id);
+        console.log(`[房间管理器] 收集目标不存在，删除: ${task.id}`);
+      }
+    } else if (task.type === 'transferEnergy') {
+      const target = Game.getObjectById(task.targetId) as StructureSpawn | StructureExtension | StructureTower | StructureContainer | StructureStorage;
+      if (!target || (target.store && target.store.getFreeCapacity(RESOURCE_ENERGY) === 0)) {
+        tasksToDelete.push(task.id);
+        console.log(`[房间管理器] 转移目标已满或不存在，删除: ${task.id}`);
       }
     }
   });
 
-  // 删除已完成的任务
+  // 删除已完成/失效的任务
   tasksToDelete.forEach(taskId => {
     if (roomMemory.tasks) {
       delete roomMemory.tasks[taskId];
-      console.log(`[房间管理器] 删除已完成任务: ${taskId}`);
+    }
+  });
+
+  // 重置失效分配的任务
+  tasksToReset.forEach(taskId => {
+    const task = roomMemory.tasks![taskId];
+    if (task) {
+      task.assignedTo = null;
+      task.assignedAt = null;
+      task.status = 'pending';
+      console.log(`[房间管理器] 搬运工死亡，重置任务${taskId}到pending状态`);
     }
   });
 }
 
-// 使用新的任务管理器更新任务系统
+// 完整的任务系统
 function updateTaskSystemWithNewManager(room: Room): void {
-  const taskManager = getRoomTaskManager(room.name);
-
-  // 让任务管理器监控任务状态（验证、超时检查、清理）
-  taskManager.monitorTasks();
-
   // 扫描静态矿工，创建搬运任务
-  scanStaticHarvestersForTransport(room, taskManager);
+  scanStaticHarvestersForTransport(room);
 
-  // 清理已完成的搬运任务
-  cleanupCompletedTransportTasks(room, taskManager);
+  // 扫描掉落资源，创建收集任务
+  scanDroppedResourcesForCollection(room);
+
+  // 扫描建筑需求，创建转移任务
+  scanBuildingsForEnergyTransfer(room);
+
+  // 清理已完成的任务
+  cleanupCompletedTransportTasks(room);
 
   // 主动分配任务给空闲的搬运工
-  assignPendingTasksToCarriers(room, taskManager);
-
-  // 让任务管理器自己处理任务分配，避免冲突
+  assignPendingTasksToCarriers(room);
 }
 
 // 主动分配待处理任务给空闲的搬运工
-function assignPendingTasksToCarriers(room: Room, taskManager: any): void {
-  // 强制重新加载任务状态，确保一致性
-  if (taskManager && typeof taskManager.reloadTasks === 'function') {
-    console.log(`[房间管理器] 强制重新加载任务状态，确保一致性`);
-    taskManager.reloadTasks();
-  }
-
+function assignPendingTasksToCarriers(room: Room): void {
   // 获取所有搬运工
   const carriers = room.find(FIND_MY_CREEPS, {
     filter: (c) => c.memory.role === 'carrier'
   });
 
   if (carriers.length === 0) {
-    console.log(`[房间管理器] 没有找到搬运工，无法分配任务`);
     return; // 没有搬运工
   }
 
-  // 获取所有待分配的任务
-  const pendingTasks = taskManager.findTaskByFilter({
-    status: 'pending'
-  });
+  // 直接从房间内存获取待分配任务
+  const roomMemory = Memory.rooms[room.name];
+  if (!roomMemory || !roomMemory.tasks) {
+    return;
+  }
+
+  const pendingTasks = Object.values(roomMemory.tasks).filter((task: any) =>
+    task.status === 'pending' && !task.assignedTo
+  );
 
   if (pendingTasks.length === 0) {
-    console.log(`[房间管理器] 没有待分配的任务`);
     return; // 没有待分配的任务
   }
 
-  // 按优先级排序任务
-  const priorityOrder: { [key: string]: number } = { 'urgent': 0, 'high': 1, 'normal': 2, 'low': 3 };
-  pendingTasks.sort((a: any, b: any) => priorityOrder[a.priority] - priorityOrder[b.priority]);
+  // 按优先级排序任务 - 细化优先级系统
+  const priorityOrder: { [key: string]: number } = {
+    'urgent': 0,    // Spawn/Extension转移
+    'high': 1,      // 矿工搬运、Tower转移、大量能量收集
+    'normal': 2,    // 普通能量收集
+    'low': 3        // 其他任务
+  };
 
-  let assignedCount = 0;
+  pendingTasks.sort((a: any, b: any) => {
+    const priorityDiff = priorityOrder[a.priority] - priorityOrder[b.priority];
+    if (priorityDiff !== 0) return priorityDiff;
 
-  // 显示当前状态，帮助调试
-  console.log(`[房间管理器] 开始分配任务，有 ${carriers.length} 个搬运工，${pendingTasks.length} 个待分配任务`);
+    // 同优先级时，按任务类型排序
+    const typeOrder: { [key: string]: number } = {
+      'assistStaticHarvester': 0,  // 矿工搬运优先
+      'transferEnergy': 1,         // 能量转移其次
+      'collectEnergy': 2           // 能量收集最后
+    };
 
-  // 显示待分配任务的详细信息
-  console.log(`[房间管理器] 待分配任务列表:`);
-  pendingTasks.forEach((task: any, index: number) => {
-    console.log(`  ${index + 1}. ${task.type} (${task.priority}) - ${task.id}`);
-  });
-
-  // 显示所有搬运工的状态
-  console.log(`[房间管理器] 搬运工状态列表:`);
-  carriers.forEach((carrier, index) => {
-    const hasTask = carrier.memory.currentTaskId ? '✅' : '❌';
-    const energy = carrier.store.getUsedCapacity(RESOURCE_ENERGY);
-    const capacity = carrier.store.getCapacity(RESOURCE_ENERGY);
-
-    console.log(`  ${index + 1}. ${carrier.name} ${hasTask} 任务: ${carrier.memory.currentTaskId || '无'} | 能量: ${energy}/${capacity}`);
+    return typeOrder[a.type] - typeOrder[b.type];
   });
 
   // 为每个待分配的任务找一个空闲的搬运工
   for (const task of pendingTasks) {
-    console.log(`[房间管理器] 尝试分配任务 ${task.id} (${task.type})`);
-
     // 寻找空闲的搬运工
-    const availableCarrier = carriers.find(carrier => {
-      // 空闲判断：搬运工没有当前任务ID
-      const isIdle = !carrier.memory.currentTaskId;
-
-      // 调试信息
-      if (carrier.name.includes('carrier')) {
-        console.log(`[调试] 搬运工 ${carrier.name}: currentTaskId=${carrier.memory.currentTaskId}, 空闲=${isIdle}`);
-      }
-
-      return isIdle;
-    });
+    const availableCarrier = carriers.find(carrier => !carrier.memory.currentTaskId);
 
     if (availableCarrier) {
-      // 直接分配任务
-      assignedCount++;
-      console.log(`[房间管理器] 分配任务 ${task.id} (${task.type}) 给搬运工 ${availableCarrier.name}`);
-
-      // 更新搬运工内存
+      // 分配任务
       availableCarrier.memory.currentTaskId = task.id;
-      availableCarrier.memory.working = true;
-
-      // 更新任务状态
       task.assignedTo = availableCarrier.id;
       task.assignedAt = Game.time;
       task.status = 'assigned';
 
-      // 同步更新房间内存中的任务状态
-      if (room.memory.tasks && room.memory.tasks[task.id]) {
-        room.memory.tasks[task.id] = task;
-        console.log(`[房间管理器] 更新房间内存中任务 ${task.id} 的 assignedTo: ${availableCarrier.id}`);
-      } else {
-        console.log(`[警告] 房间内存中没有找到任务 ${task.id}，无法同步状态`);
-      }
-
-      // 通知任务管理器更新状态
-      try {
-        if (taskManager && typeof taskManager.updateTaskAssignment === 'function') {
-          taskManager.updateTaskAssignment(task.id, availableCarrier.id, 'assigned');
-          console.log(`[房间管理器] 通知任务管理器任务 ${task.id} 分配给: ${availableCarrier.id}`);
-        } else if (taskManager && typeof taskManager.updateTaskStatus === 'function') {
-          // 兼容旧版本
-          taskManager.updateTaskStatus(task.id, 'assigned');
-          console.log(`[房间管理器] 使用兼容方式更新任务状态: ${task.id}`);
-        }
-      } catch (error) {
-        console.log(`[房间管理器] 通知任务管理器失败: ${error}`);
-      }
-
-      // 验证任务分配是否成功
-      console.log(`[房间管理器] 任务 ${task.id} 分配完成，assignedTo: ${task.assignedTo}, status: ${task.status}`);
-    } else {
-      console.log(`[房间管理器] 没有找到空闲搬运工来分配任务 ${task.id}`);
+      // 更新房间内存中的任务
+      roomMemory.tasks![task.id] = task;
     }
-  }
-
-  if (assignedCount > 0) {
-    console.log(`[房间管理器] 分配了 ${assignedCount} 个任务给搬运工`);
-  } else {
-    console.log(`[房间管理器] 没有成功分配任何任务`);
-  }
-
-  // 显示未分配任务的统计
-  const unassignedTasks = pendingTasks.filter((t: any) => !t.assignedTo);
-  if (unassignedTasks.length > 0) {
-    console.log(`[房间管理器] 还有 ${unassignedTasks.length} 个任务未分配`);
-
-    // 显示搬运工状态
-    console.log(`\n搬运工状态:`);
-    carriers.forEach((carrier, index) => {
-      const hasTask = carrier.memory.currentTaskId ? '✅' : '❌';
-      const energy = carrier.store.getUsedCapacity(RESOURCE_ENERGY);
-      const capacity = carrier.store.getCapacity(RESOURCE_ENERGY);
-
-      console.log(`  ${index + 1}. ${carrier.name} ${hasTask} 任务: ${carrier.memory.currentTaskId || '无'} | 能量: ${energy}/${capacity}`);
-    });
   }
 }
 
 // 扫描静态矿工，创建搬运任务
-function scanStaticHarvestersForTransport(room: Room, taskManager: any): void {
+function scanStaticHarvestersForTransport(room: Room): void {
   const staticHarvesters = room.find(FIND_MY_CREEPS, {
     filter: (c) => c.memory.role === 'staticHarvester' &&
                    c.memory.targetId &&
@@ -265,7 +215,7 @@ function scanStaticHarvestersForTransport(room: Room, taskManager: any): void {
 
     if (!existingTask) {
       // 创建搬运任务
-      const taskId = createTransportTask(harvester, taskManager);
+      const taskId = createTransportTask(harvester);
       if (taskId) {
         console.log(`[房间管理器] 为静态矿工 ${harvester.name} 创建搬运任务: ${taskId}`);
       }
@@ -274,7 +224,7 @@ function scanStaticHarvestersForTransport(room: Room, taskManager: any): void {
 }
 
 // 创建搬运任务
-function createTransportTask(harvester: Creep, taskManager: any): string | null {
+function createTransportTask(harvester: Creep): string | null {
   if (!harvester.memory.targetId) return null;
 
   const [targetX, targetY] = harvester.memory.targetId.split(',').map(Number);
@@ -297,7 +247,7 @@ function createTransportTask(harvester: Creep, taskManager: any): string | null 
     errorMessage: null
   };
 
-  // 保存到房间内存
+  // 只保存到房间内存，砍掉任务管理器的垃圾同步
   if (!Memory.rooms[harvester.room.name]) {
     Memory.rooms[harvester.room.name] = {
       staticHarvesters: 0,
@@ -315,23 +265,192 @@ function createTransportTask(harvester: Creep, taskManager: any): string | null 
 
   Memory.rooms[harvester.room.name].tasks![task.id] = task;
 
-  // 同时通知任务管理器，确保状态同步
-  try {
-    if (taskManager && typeof taskManager.addTask === 'function') {
-      // 使用新的 addTask 方法直接添加任务到管理器
-      taskManager.addTask(task);
-      console.log(`[房间管理器] 成功同步任务到任务管理器: ${task.id}`);
-    } else if (taskManager && typeof taskManager.createAssistStaticHarvesterTask === 'function') {
-      // 兼容旧版本
-      taskManager.createAssistStaticHarvesterTask(harvester, 'high');
-      console.log(`[房间管理器] 使用兼容方式创建搬运任务: ${task.id}`);
-    } else {
-      console.log(`[警告] 任务管理器不支持任务创建，状态可能不同步: ${task.id}`);
+  return task.id;
+}
+
+// 扫描掉落资源，创建收集任务
+function scanDroppedResourcesForCollection(room: Room): void {
+  // 查找掉落的能量资源
+  const droppedEnergy = room.find(FIND_DROPPED_RESOURCES, {
+    filter: (resource) => resource.resourceType === RESOURCE_ENERGY && resource.amount > 50
+  });
+
+  // 查找墓碑中的能量
+  const tombstones = room.find(FIND_TOMBSTONES, {
+    filter: (tombstone) => tombstone.store.getUsedCapacity(RESOURCE_ENERGY) > 0
+  });
+
+  // 查找废墟中的能量
+  const ruins = room.find(FIND_RUINS, {
+    filter: (ruin) => ruin.store.getUsedCapacity(RESOURCE_ENERGY) > 0
+  });
+
+  const allTargets = [...droppedEnergy, ...tombstones, ...ruins];
+
+  for (const target of allTargets) {
+    // 检查是否已有收集任务
+    const existingTask = Object.values(room.memory.tasks || {}).find((task: any) =>
+      task.type === 'collectEnergy' && task.targetId === target.id
+    );
+
+    if (!existingTask) {
+      const taskId = createCollectEnergyTask(room, target);
+      if (taskId) {
+        console.log(`[房间管理器] 创建能量收集任务: ${taskId} 目标: ${target.id}`);
+      }
     }
-  } catch (error) {
-    console.log(`[房间管理器] 通知任务管理器创建搬运任务失败: ${error}`);
+  }
+}
+
+// 创建能量收集任务
+function createCollectEnergyTask(room: Room, target: Resource | Tombstone | Ruin): string | null {
+  let targetType: string;
+  let energyAmount: number;
+
+  if (target instanceof Resource) {
+    targetType = 'dropped';
+    energyAmount = target.amount;
+  } else if ('body' in target) {
+    targetType = 'tombstone';
+    energyAmount = target.store.getUsedCapacity(RESOURCE_ENERGY);
+  } else {
+    targetType = 'ruin';
+    energyAmount = target.store.getUsedCapacity(RESOURCE_ENERGY);
   }
 
+  // 找到最近的存储建筑
+  const storageTargets = room.find(FIND_STRUCTURES, {
+    filter: (structure) => {
+      return (structure.structureType === STRUCTURE_CONTAINER ||
+              structure.structureType === STRUCTURE_STORAGE) &&
+             structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0;
+    }
+  });
+
+  if (storageTargets.length === 0) {
+    return null; // 没有存储地点
+  }
+
+  const nearestStorage = target.pos.findClosestByRange(storageTargets);
+  if (!nearestStorage) return null;
+
+  const task = {
+    id: `${room.name}_collect_${target.id}`,
+    type: 'collectEnergy',
+    priority: energyAmount > 200 ? 'high' : 'normal',
+    status: 'pending',
+    roomName: room.name,
+    createdAt: Game.time,
+    expiresAt: Game.time + 300,
+    targetId: target.id,
+    targetType: targetType,
+    storageTargetId: nearestStorage.id,
+    energyAmount: energyAmount,
+    assignedTo: null,
+    assignedAt: null,
+    completedAt: null,
+    errorMessage: null
+  };
+
+  // 保存到房间内存
+  if (!room.memory.tasks) {
+    room.memory.tasks = {};
+  }
+
+  room.memory.tasks[task.id] = task;
+  return task.id;
+}
+
+// 扫描建筑需求，创建能量转移任务
+function scanBuildingsForEnergyTransfer(room: Room): void {
+  // 优先级顺序：Spawn > Extension > Tower > 其他
+  const priorityBuildings = [
+    // 1. Spawn和Extension（最高优先级）
+    ...room.find(FIND_STRUCTURES, {
+      filter: (structure) => {
+        return (structure.structureType === STRUCTURE_SPAWN ||
+                structure.structureType === STRUCTURE_EXTENSION) &&
+               structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0;
+      }
+    }),
+
+    // 2. 塔（高优先级）
+    ...room.find(FIND_STRUCTURES, {
+      filter: (structure) => {
+        return structure.structureType === STRUCTURE_TOWER &&
+               structure.store.getFreeCapacity(RESOURCE_ENERGY) > 100;
+      }
+    })
+  ];
+
+  // 查找能量来源
+  const energySources = room.find(FIND_STRUCTURES, {
+    filter: (structure) => {
+      return (structure.structureType === STRUCTURE_CONTAINER ||
+              structure.structureType === STRUCTURE_STORAGE) &&
+             structure.store.getUsedCapacity(RESOURCE_ENERGY) > 100;
+    }
+  });
+
+  if (energySources.length === 0) {
+    return; // 没有能量来源
+  }
+
+  for (const building of priorityBuildings) {
+    // 检查是否已有转移任务
+    const existingTask = Object.values(room.memory.tasks || {}).find((task: any) =>
+      task.type === 'transferEnergy' && task.targetId === building.id
+    );
+
+    if (!existingTask) {
+      const nearestSource = building.pos.findClosestByRange(energySources);
+      if (nearestSource) {
+        const taskId = createTransferEnergyTask(room, nearestSource, building as StructureSpawn | StructureExtension | StructureTower | StructureContainer | StructureStorage);
+        if (taskId) {
+          console.log(`[房间管理器] 创建能量转移任务: ${taskId} ${nearestSource.id} -> ${building.id}`);
+        }
+      }
+    }
+  }
+}
+
+// 创建能量转移任务
+function createTransferEnergyTask(room: Room, source: Structure, target: StructureSpawn | StructureExtension | StructureTower | StructureContainer | StructureStorage): string | null {
+  let priority: string;
+
+  // 根据目标建筑设定优先级
+  if (target.structureType === STRUCTURE_SPAWN || target.structureType === STRUCTURE_EXTENSION) {
+    priority = 'urgent';
+  } else if (target.structureType === STRUCTURE_TOWER) {
+    priority = 'high';
+  } else {
+    priority = 'normal';
+  }
+
+  const task = {
+    id: `${room.name}_transfer_${source.id}_${target.id}`,
+    type: 'transferEnergy',
+    priority: priority,
+    status: 'pending',
+    roomName: room.name,
+    createdAt: Game.time,
+    expiresAt: Game.time + 200,
+    sourceId: source.id,
+    sourceType: 'structure',
+    targetId: target.id,
+    targetCapacity: target.store.getFreeCapacity(RESOURCE_ENERGY),
+    assignedTo: null,
+    assignedAt: null,
+    completedAt: null,
+    errorMessage: null
+  };
+
+  // 保存到房间内存
+  if (!room.memory.tasks) {
+    room.memory.tasks = {};
+  }
+
+  room.memory.tasks[task.id] = task;
   return task.id;
 }
 

@@ -66,12 +66,15 @@ export class RoleStaticHarvester {
 
     // 如果任务已分配，检查搬运工是否在身边
     if (existingTask.assignedTo && (existingTask.status === 'assigned' || existingTask.status === 'in_progress')) {
-      const assignedCarrier = Game.creeps[existingTask.assignedTo];
+      const assignedCarrier = Game.getObjectById(existingTask.assignedTo) as Creep;
       if (assignedCarrier && creep.pos.isNearTo(assignedCarrier.pos)) {
-        // 搬运工在身边，跟着走
+        // 搬运工在身边，矿工配合pull操作
         const moveResult = creep.move(assignedCarrier);
         if (moveResult === OK) {
-          console.log(`[静态矿工${creep.name}] 跟随搬运工移动`);
+          creep.say('🤝 配合搬运');
+          console.log(`[静态矿工${creep.name}] 配合搬运工${assignedCarrier.name}的pull操作`);
+        } else {
+          console.log(`[静态矿工${creep.name}] 配合pull失败: ${moveResult}`);
         }
       }
     }
@@ -185,9 +188,10 @@ export class RoleStaticHarvester {
       if (nearestSource) {
         const harvestResult = creep.harvest(nearestSource);
         if (harvestResult === OK) {
+          creep.say('⛏️ 挖矿');
         } else if (harvestResult === ERR_NOT_IN_RANGE) {
-          // 虽然到达目标位置，但可能还需要微调
-          creep.moveTo(nearestSource, { visualizePathStyle: { stroke: '#ffaa00' } });
+          // 静态矿工没有MOVE部件，不能移动，等待搬运工pull
+          creep.say('❌ 位置错误');
         }
       }
     }

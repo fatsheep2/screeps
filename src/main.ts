@@ -76,23 +76,7 @@ export const loop = ErrorMapper.wrapLoop(() => {
   // 清理已死亡 Creep 的内存
   cleanupDeadCreeps();
 
-  // 定期清理过期任务（每100个tick执行一次）
-  if (Game.time % 100 === 0) {
-    for (const roomName in Game.rooms) {
-      const room = Game.rooms[roomName];
-      if (room.controller && room.controller.my) {
-        try {
-          const { getRoomTaskManager } = require('./managers/taskManager');
-          const taskManager = getRoomTaskManager(roomName);
-          if (taskManager && typeof (taskManager as any).cleanupTasks === 'function') {
-            (taskManager as any).cleanupTasks();
-          }
-        } catch (error) {
-          // 忽略错误
-        }
-      }
-    }
-  }
+  // 定期清理过期任务已经在房间管理器中处理
 
   // 遍历每个房间
   for (const roomName in Game.rooms) {

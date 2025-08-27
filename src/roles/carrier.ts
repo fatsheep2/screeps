@@ -29,47 +29,27 @@ export class RoleCarrier {
     this.executeDefaultBehavior(creep);
   }
 
-  // 查找分配给自己的任务
+  // 查找分配给自己的任务 - 简化为单一数据源
   private static findMyTask(creep: Creep): Task | null {
     const roomMemory = Memory.rooms[creep.room.name];
     if (!roomMemory || !roomMemory.tasks) {
       return null;
     }
 
-    // 查找assignedTo字段为自己名字或ID的任务
+    // 只查房间内存，消除多重数据源
     for (const taskId in roomMemory.tasks) {
       const task = roomMemory.tasks[taskId];
-      if ((task.assignedTo === creep.name || task.assignedTo === creep.id) &&
+      if (task.assignedTo === creep.id && 
           (task.status === 'assigned' || task.status === 'in_progress')) {
-
-        // 确保 currentTaskId 正确设置
-        if (creep.memory.currentTaskId !== task.id) {
-          creep.memory.currentTaskId = task.id;
-          console.log(`[搬运工${creep.name}] 设置 currentTaskId: ${task.id}`);
-        }
-
+        
+        creep.memory.currentTaskId = task.id;
         return task;
       }
     }
 
-    // 如果没有找到任务，尝试通过任务管理器查找
-    try {
-      const { getRoomTaskManager } = require('../managers/taskManager');
-      const taskManager = getRoomTaskManager(creep.room.name);
-      if (taskManager && typeof taskManager.getCreepTask === 'function') {
-        const managerTask = taskManager.getCreepTask(creep.id);
-        if (managerTask) {
-          // 确保 currentTaskId 正确设置
-          if (creep.memory.currentTaskId !== managerTask.id) {
-            creep.memory.currentTaskId = managerTask.id;
-            console.log(`[搬运工${creep.name}] 通过任务管理器设置 currentTaskId: ${managerTask.id}`);
-          }
-
-          return managerTask;
-        }
-      }
-    } catch (error) {
-      // 忽略错误，继续使用内存中的任务
+    // 没找到任务，清理过期的currentTaskId
+    if (creep.memory.currentTaskId) {
+      delete creep.memory.currentTaskId;
     }
 
     return null;
@@ -111,31 +91,17 @@ export class RoleCarrier {
     }
   }
 
-  // 完成任务
+  // 完成任务 - 简化为单一操作
   private static completeTask(creep: Creep, task: Task): void {
     console.log(`[搬运工${creep.name}] 任务完成: ${task.id}`);
 
-    // 从房间任务中删除
+    // 只操作房间内存，消除多重同步
     const roomMemory = Memory.rooms[creep.room.name];
     if (roomMemory && roomMemory.tasks) {
       delete roomMemory.tasks[task.id];
-      console.log(`[搬运工${creep.name}] 从房间内存中删除任务: ${task.id}`);
     }
 
-    // 清除搬运工的任务ID
     delete creep.memory.currentTaskId;
-
-    // 通知任务管理器任务已完成
-    try {
-      const { getRoomTaskManager } = require('../managers/taskManager');
-      const taskManager = getRoomTaskManager(creep.room.name);
-      if (taskManager && typeof taskManager.completeTask === 'function') {
-        taskManager.completeTask(task.id);
-        console.log(`[搬运工${creep.name}] 通知任务管理器任务完成: ${task.id}`);
-      }
-    } catch (error) {
-      console.log(`[搬运工${creep.name}] 通知任务管理器失败: ${error}`);
-    }
   }
 
     // 执行搬运任务
@@ -178,14 +144,13 @@ export class RoleCarrier {
       return { success: true, shouldContinue: true, message: '正在搬运矿工' };
     }
 
-    // 已经到达任务地点，并且矿工在身边，直接和矿工对调位置
+    // 已经到达任务地点，并且矿工在身边，对换位置
     if (harvester.pos.isNearTo(creep.pos)) {
-      // 先pull矿工，然后搬运工移动到矿工的位置
       creep.say('🔄 对调位置');
       const pullResult = creep.pull(harvester);
 
       if (pullResult === OK) {
-        // 搬运工移动到矿工的位置，矿工通过pull机制到达目标位置
+        // 搬运工移动到矿工位置，矿工被pull到搬运工原位置（目标位置）
         const moveResult = creep.moveTo(harvester.pos, { reusePath: 3 });
         console.log(`[搬运工${creep.name}] 对调位置，pull结果: ${pullResult}, 移动结果: ${moveResult}`);
 
