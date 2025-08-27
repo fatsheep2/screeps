@@ -1,383 +1,339 @@
+import { TaskExecutor } from '../executors/taskExecutor';
+import { Task } from '../types/tasks';
+
 export class RoleCarrier {
-    public static run(creep: Creep): void {
-      // 状态切换逻辑
-      if (creep.memory.working && creep.store.getUsedCapacity() === 0) {
-        creep.memory.working = false;
-        creep.say('📦 收集');
-        delete creep.memory.targetId;
-      }
+  public static run(creep: Creep): void {
+    // 状态切换逻辑
+    if (creep.memory.working && creep.store.getUsedCapacity() === 0) {
+      creep.memory.working = false;
+      creep.say('📦 收集');
+      delete creep.memory.targetId;
+      delete creep.memory.currentTaskId;
+    }
 
-      if (!creep.memory.working && creep.store.getFreeCapacity() === 0) {
-        creep.memory.working = true;
-        creep.say('🚚 运输');
-        delete creep.memory.targetId;
-      }
+    if (!creep.memory.working && creep.store.getFreeCapacity() === 0) {
+      creep.memory.working = true;
+      creep.say('🚚 运输');
+      delete creep.memory.targetId;
+      delete creep.memory.currentTaskId;
+    }
 
-      // 优先检查是否需要帮助静态矿工移动
-      if (this.shouldHelpStaticHarvester(creep)) {
-        this.helpStaticHarvester(creep);
-        return;
-      }
+    // 从任务列表查找分配给自己的任务
+    const myTask = this.findMyTask(creep);
+    if (myTask) {
+      this.executeTask(creep, myTask);
+      return;
+    }
 
-      if (creep.memory.working) {
-        // 运输模式：将资源运输到需要的地方
-        this.deliverResources(creep);
-      } else {
-        // 收集模式：从地面或容器收集资源
-        this.collectResources(creep);
+    // 没有任务时执行默认行为
+    this.executeDefaultBehavior(creep);
+  }
+
+  // 查找分配给自己的任务
+  private static findMyTask(creep: Creep): Task | null {
+    const roomMemory = Memory.rooms[creep.room.name];
+    if (!roomMemory || !roomMemory.tasks) {
+      return null;
+    }
+
+    // 查找assignedTo字段为自己名字的任务
+    for (const taskId in roomMemory.tasks) {
+      const task = roomMemory.tasks[taskId];
+      if (task.assignedTo === creep.name &&
+          (task.status === 'assigned' || task.status === 'in_progress')) {
+        return task;
       }
     }
 
-    // 检查是否需要帮助静态矿工移动
-    private static shouldHelpStaticHarvester(creep: Creep): boolean {
-      // 检查是否在交换完成后的冷却时间内（避免立即被重新选中）
-      if (creep.memory.lastExchangeTime && Game.time - creep.memory.lastExchangeTime < 10) {
-        return false;
+    return null;
+  }
+
+
+
+
+
+    // 执行任务
+  private static executeTask(creep: Creep, task: Task): void {
+    console.log(`[搬运工${creep.name}] 执行任务: ${task.type} - ${task.id}`);
+
+    if (task.type === 'assistStaticHarvester') {
+      const result = this.executeTransportTask(creep, task);
+      if (!result.shouldContinue) {
+        // 任务完成，清理任务
+        this.completeTask(creep, task);
       }
-
-      // 检查是否已经有其他运输工在帮助移动
-      const helpingCarriers = creep.room.find(FIND_MY_CREEPS, {
-        filter: (c) => c.memory.role === 'carrier' &&
-                       c.id !== creep.id &&
-                       c.memory.helpingStaticHarvester // 检查其他运输工是否在帮助
-      });
-
-      // 如果已经有运输工在帮助移动，这个运输工就不需要帮忙了
-      if (helpingCarriers.length > 0) {
-        return false;
-      }
-
-      // 检查是否有需要帮助的静态矿工（working !== true）
-      const staticHarvesters = creep.room.find(FIND_MY_CREEPS, {
-        filter: (c) => c.memory.role === 'staticHarvester' &&
-                       c.memory.targetId &&
-                       c.getActiveBodyparts(MOVE) == 0 && // 只帮助没有 MOVE 部件的静态矿工
-                       c.memory.working !== true // 检查working状态
-      });
-
-      return staticHarvesters.length > 0;
-    }
-
-    // 帮助静态矿工移动到指定位置
-    private static helpStaticHarvester(creep: Creep): void {
-      // 如果已经有帮助的矿工，继续帮助同一个
-      if (creep.memory.helpingStaticHarvester) {
-        const target = Game.creeps[creep.memory.helpingStaticHarvester];
-        if (target && target.memory.role === 'staticHarvester') {
-          // 检查矿工是否已经到达目标位置
-          if (target.memory.working === true) {
-            // 矿工已经到达，清除帮助状态，寻找下一个
-            delete creep.memory.helpingStaticHarvester;
-            return;
-          }
-          // 继续帮助这个矿工
-          this.assistStaticHarvester(creep, target);
-          return;
-        }
-      }
-
-      // 寻找新的需要帮助的矿工
-      const target = creep.pos.findClosestByRange(FIND_MY_CREEPS, {
-        filter: function(object) {
-          return object.memory.role === 'staticHarvester' &&
-                 object.memory.targetId &&
-                 object.getActiveBodyparts(MOVE) === 0 &&
-                 object.memory.working !== true;
-        }
-      });
-
-      if (target) {
-        // 记录要帮助的矿工名字
-        creep.memory.helpingStaticHarvester = target.name;
-        creep.say('🚶 帮助移动');
-        this.assistStaticHarvester(creep, target);
+    } else {
+      // 其他任务交给TaskExecutor处理
+      const result = TaskExecutor.executeTask(creep, task);
+      if (!result.shouldContinue) {
+        // 任务完成，清理任务
+        this.completeTask(creep, task);
       }
     }
+  }
 
-    // 协助静态矿工移动
-    private static assistStaticHarvester(creep: Creep, target: Creep): void {
-      const targetPos = new RoomPosition(
-        parseInt(target.memory.targetId!.split(',')[0]),
-        parseInt(target.memory.targetId!.split(',')[1]),
-        target.room.name
-      );
+  // 完成任务
+  private static completeTask(creep: Creep, task: Task): void {
+    console.log(`[搬运工${creep.name}] 任务完成: ${task.id}`);
 
-      // 检查是否已经完成交换（运输兵在矿工原位置，矿工在目标位置）
-      if (target.pos.isEqualTo(targetPos) && !creep.pos.isEqualTo(targetPos)) {
-        // 交换完成，清除帮助状态
-        creep.say('✅ 交换完成');
-        delete creep.memory.helpingStaticHarvester;
+    // 从房间任务中删除
+    const roomMemory = Memory.rooms[creep.room.name];
+    if (roomMemory && roomMemory.tasks) {
+      delete roomMemory.tasks[task.id];
+    }
 
-        // 等待几轮确保状态稳定，避免立即被重新选中
-        creep.memory.lastExchangeTime = Game.time;
-        return;
-      }
+    // 清除搬运工的任务ID
+    delete creep.memory.currentTaskId;
+  }
 
-      // 检查运输兵是否已经到达目标位置
-      if (creep.pos.isEqualTo(targetPos)) {
-        // 已经到达目标位置，现在需要让矿工也过来
-        creep.say('📍 等待矿工');
-        console.log(`运输兵 ${creep.name} 到达目标位置 (${targetPos.x},${targetPos.y})，等待矿工 ${target.name} 过来`);
+    // 执行搬运任务
+  private static executeTransportTask(creep: Creep, task: any): { success: boolean; shouldContinue: boolean; message?: string } {
+    const harvester = Game.getObjectById(task.harvesterId) as Creep;
+    if (!harvester) {
+      console.log(`[搬运工${creep.name}] 静态矿工不存在: ${task.harvesterId}`);
+      return { success: false, shouldContinue: false, message: '静态矿工不存在' };
+    }
 
-        // 直接和矿工交换位置
-        creep.say('🔄 交换位置');
-        console.log(`运输兵 ${creep.name} 准备与矿工 ${target.name} 交换位置`);
+    const targetPos = new RoomPosition(task.targetPosition.x, task.targetPosition.y, creep.room.name);
 
-        // 先 pull 矿工
-        const pullResult = creep.pull(target);
-        if (pullResult == OK) {
-          console.log(`运输兵 ${creep.name} 开始 pull 矿工 ${target.name}`);
-
-          // 让矿工移动到运输兵位置（目标位置）
-          const moveResult = target.move(creep);
-          if (moveResult == OK) {
-            // 矿工成功移动到目标位置，现在运输兵移动到矿工的原位置
-            const harvesterOriginalPos = target.pos;
-            creep.moveTo(harvesterOriginalPos, {
-              visualizePathStyle: { stroke: '#ffaa00' },
-              reusePath: 3
-            });
-            creep.say('🔄 交换中');
-            // 等待下一轮完成真正的交换
-          }
-        } else {
-          // pull 失败，先移动到矿工身边
-          creep.say('❌ Pull失败');
-          creep.moveTo(target, {
-            visualizePathStyle: { stroke: '#ffaa00' },
-            reusePath: 3
-          });
-        }
-        return;
-      }
-
-            // 还没到达目标位置，需要同时考虑与矿工的距离
-      const distanceToTarget = creep.pos.getRangeTo(targetPos);
-      const distanceToHarvester = creep.pos.getRangeTo(target);
-
-      // 如果矿工距离太远，先回到矿工身边
-      if (distanceToHarvester > 1) {
-        creep.say(`📢 回到矿工身边 距离:${distanceToHarvester}格`);
-        console.log(`运输兵 ${creep.name} 距离矿工太远 (${distanceToHarvester}格)，先回到矿工身边`);
-        creep.moveTo(target, {
-          visualizePathStyle: { stroke: '#00ff00' },
+    // 如果还没到达目标地点，先到矿工旁边
+    if (!creep.pos.isEqualTo(targetPos)) {
+      // 如果矿工不在身边，先走到矿工旁边
+      if (!creep.pos.isNearTo(harvester.pos)) {
+        creep.moveTo(harvester.pos, {
+          visualizePathStyle: { stroke: '#ffaa00' },
           reusePath: 3
         });
-        return;
+        creep.say('🚶 走向矿工');
+        return { success: true, shouldContinue: true, message: '正在走向矿工' };
       }
 
-      // 矿工在附近，可以一起移动
-      creep.say(`🚶 前往目标 (${targetPos.x},${targetPos.y}) 距离:${distanceToTarget}格`);
-      console.log(`运输兵 ${creep.name} 协助矿工 ${target.name} 前往目标位置 (${targetPos.x},${targetPos.y})，当前距离: ${distanceToTarget}格`);
+      // 已经在矿工旁边，pull着矿工往任务地点前进
+      creep.say('🚛 搬运中');
+      const pullResult = creep.pull(harvester);
 
-      // 一直 pull 矿工，直到到达目标位置
-      const pullResult = creep.pull(target);
-      if (pullResult == OK) {
-        // 让矿工跟随
-        target.move(creep);
-
-        // 向目标位置移动一步
-        creep.moveTo(targetPos, {
-          visualizePathStyle: { stroke: '#00ff00' },
-          reusePath: 5
-        });
-        creep.say('🔄 前进');
-      } else {
-        // pull 失败，先移动到矿工身边
-        creep.moveTo(target, {
-          visualizePathStyle: { stroke: '#00ff00' },
+      if (pullResult === OK) {
+        // 向目标地点移动
+        const moveResult = creep.moveTo(targetPos, {
+          visualizePathStyle: { stroke: '#ffaa00' },
           reusePath: 3
         });
+        console.log(`[搬运工${creep.name}] pull结果: ${pullResult}, 移动结果: ${moveResult}`);
+      } else {
+        console.log(`[搬运工${creep.name}] pull失败: ${pullResult}`);
       }
+
+      return { success: true, shouldContinue: true, message: '正在搬运矿工' };
     }
 
+    // 已经到达任务地点，并且矿工在身边，直接和矿工对调位置
+    if (harvester.pos.isNearTo(creep.pos)) {
+      // 先pull矿工，然后搬运工移动到矿工的位置
+      creep.say('🔄 对调位置');
+      const pullResult = creep.pull(harvester);
+
+      if (pullResult === OK) {
+        // 搬运工移动到矿工的位置，矿工通过pull机制到达目标位置
+        const moveResult = creep.moveTo(harvester.pos, { reusePath: 3 });
+        console.log(`[搬运工${creep.name}] 对调位置，pull结果: ${pullResult}, 移动结果: ${moveResult}`);
+
+        // 检查矿工是否已经到达目标位置
+        if (harvester.pos.isEqualTo(targetPos)) {
+          harvester.memory.working = true;
+          console.log(`[搬运工${creep.name}] 搬运任务完成，矿工${harvester.name}已就位`);
+          return { success: true, shouldContinue: false, message: '搬运任务完成' };
+        }
+      } else {
+        console.log(`[搬运工${creep.name}] 对调位置时pull失败: ${pullResult}`);
+      }
+
+      return { success: true, shouldContinue: true, message: '正在对调位置' };
+    }
+
+    // 到达目标地点但矿工不在身边，回到矿工身边
+    creep.say('🔄 回到矿工身边');
+    creep.moveTo(harvester.pos, {
+      visualizePathStyle: { stroke: '#ffaa00' },
+      reusePath: 3
+    });
+
+    return { success: true, shouldContinue: true, message: '正在回到矿工身边' };
+  }
 
 
 
+  // 执行默认行为（收集或运输能量）
+  private static executeDefaultBehavior(creep: Creep): void {
+    if (creep.memory.working) {
+      // 运输模式：转移能量
+      this.deliverResources(creep);
+    } else {
+      // 收集模式：捡起能量
+      this.collectResources(creep);
+    }
+  }
 
-    // 收集资源
-    private static collectResources(creep: Creep): void {
-      let target: Resource | Structure | Ruin | null = null;
+  // 收集资源 - 简化逻辑
+  private static collectResources(creep: Creep): void {
+    let target: Resource | Structure | Tombstone | Ruin | null = null;
 
-      // 1. 优先从墓碑收集资源
+    // 1. 优先收集地上的能量
+    const droppedResources = creep.room.find(FIND_DROPPED_RESOURCES, {
+      filter: (resource) => resource.resourceType === RESOURCE_ENERGY
+    });
+
+    if (droppedResources.length > 0) {
+      target = creep.pos.findClosestByPath(droppedResources);
+    }
+
+    // 2. 从墓碑收集能量
+    if (!target) {
       const tombstones = creep.room.find(FIND_TOMBSTONES, {
         filter: (tombstone) => tombstone.store.getUsedCapacity(RESOURCE_ENERGY) > 0
       });
 
       if (tombstones.length > 0) {
-        const closestTombstone = creep.pos.findClosestByPath(tombstones);
-        if (closestTombstone) {
-          const result = creep.withdraw(closestTombstone, RESOURCE_ENERGY);
-          if (result === ERR_NOT_IN_RANGE) {
-            creep.moveTo(closestTombstone, {
-              visualizePathStyle: { stroke: '#ffaa00' }
-            });
-          } else if (result === OK) {
-            creep.say('🪦');
-          }
-          return; // 直接返回，不执行后续逻辑
-        }
-      }
-
-      // 2. 优先收集地上的资源
-      const droppedResources = creep.room.find(FIND_DROPPED_RESOURCES, {
-        filter: (resource) => resource.resourceType === RESOURCE_ENERGY
-      });
-
-      if (droppedResources.length > 0) {
-        // 按照资源储量排序，优先收集储量大的资源
-        const sortedResources = droppedResources.sort((a, b) => b.amount - a.amount);
-
-        // 从储量最大的资源开始，选择最近的一个
-        for (const resource of sortedResources) {
-          const distance = creep.pos.getRangeTo(resource);
-          // 如果储量足够大或者距离合理，就选择这个资源
-          if (resource.amount >= 50 || distance <= 10) {
-            target = resource;
-            break;
-          }
-        }
-
-        // 如果没有找到合适的，就选择储量最大的
-        if (!target && sortedResources.length > 0) {
-          target = sortedResources[0];
-        }
-      }
-
-      // 3. 从废墟收集资源
-      if (!target) {
-        const ruins = creep.room.find(FIND_RUINS, {
-          filter: (ruin) => ruin.store.getUsedCapacity(RESOURCE_ENERGY) > 0
-        });
-
-        if (ruins.length > 0) {
-          target = creep.pos.findClosestByPath(ruins);
-        }
-      }
-
-      // 4. 从满载的容器收集，准备搬运到storage
-      if (!target) {
-        const containers = creep.room.find(FIND_STRUCTURES, {
-          filter: (structure) => {
-            return structure.structureType === STRUCTURE_CONTAINER &&
-                   structure.store.getUsedCapacity(RESOURCE_ENERGY) > 0;
-          }
-        });
-
-        if (containers.length > 0) {
-          target = creep.pos.findClosestByPath(containers);
-        }
-      }
-
-      // 执行收集
-      if (target) {
-        let result: number;
-
-        if (target instanceof Resource) {
-          result = creep.pickup(target);
-        } else if (target instanceof Ruin) {
-          result = creep.withdraw(target, RESOURCE_ENERGY);
-        } else {
-          result = creep.withdraw(target, RESOURCE_ENERGY);
-        }
-
-        if (result === ERR_NOT_IN_RANGE) {
-          creep.moveTo(target, {
-            visualizePathStyle: { stroke: '#ffaa00' }
-          });
-        } else if (result === OK) {
-          creep.say('📦');
-        }
-      } else {
-        // 如果没有可收集的资源，尝试帮助静态矿工移动
-        if (this.shouldHelpStaticHarvester(creep)) {
-          this.helpStaticHarvester(creep);
-        } else {
-          creep.say('⏳ 等待任务');
-        }
+        target = creep.pos.findClosestByPath(tombstones);
       }
     }
 
-    // 运输资源
-    private static deliverResources(creep: Creep): void {
-      let target: Structure | ConstructionSite | null = null;
+    // 3. 从废墟收集能量
+    if (!target) {
+      const ruins = creep.room.find(FIND_RUINS, {
+        filter: (ruin) => ruin.store.getUsedCapacity(RESOURCE_ENERGY) > 0
+      });
 
-      // 1. 优先运输到 Extension（扩展建筑）
-      const extensions = creep.room.find(FIND_STRUCTURES, {
+      if (ruins.length > 0) {
+        target = creep.pos.findClosestByPath(ruins);
+      }
+    }
+
+    // 4. 从容器收集能量
+    if (!target) {
+      const containers = creep.room.find(FIND_STRUCTURES, {
         filter: (structure) => {
-          return structure.structureType === STRUCTURE_EXTENSION &&
+          return (structure.structureType === STRUCTURE_CONTAINER ||
+                  structure.structureType === STRUCTURE_STORAGE) &&
+                 structure.store.getUsedCapacity(RESOURCE_ENERGY) > 0;
+        }
+      });
+
+      if (containers.length > 0) {
+        target = creep.pos.findClosestByPath(containers);
+      }
+    }
+
+    // 执行收集
+    if (target) {
+      let result: number;
+
+      if (target instanceof Resource) {
+        result = creep.pickup(target);
+      } else if (target instanceof Ruin) {
+        result = creep.withdraw(target, RESOURCE_ENERGY);
+      } else {
+        result = creep.withdraw(target, RESOURCE_ENERGY);
+      }
+
+      if (result === ERR_NOT_IN_RANGE) {
+        creep.moveTo(target, {
+          visualizePathStyle: { stroke: '#ffaa00' }
+        });
+      } else if (result === OK) {
+        creep.say('📦');
+      }
+    } else {
+      // 没有可收集的资源，原地等待
+      creep.say('⏳ 等待');
+    }
+  }
+
+  // 运输资源 - 简化逻辑
+  private static deliverResources(creep: Creep): void {
+    let target: Structure | Creep | null = null;
+
+    // 1. 优先运输到 Extension
+    const extensions = creep.room.find(FIND_STRUCTURES, {
+      filter: (structure) => {
+        return structure.structureType === STRUCTURE_EXTENSION &&
+               structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0;
+      }
+    });
+
+    if (extensions.length > 0) {
+      target = creep.pos.findClosestByPath(extensions);
+      creep.say('🏗️ 填充扩展');
+    }
+
+    // 2. 运输到 Spawn
+    if (!target) {
+      const spawns = creep.room.find(FIND_STRUCTURES, {
+        filter: (structure) => {
+          return structure.structureType === STRUCTURE_SPAWN &&
                  structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0;
         }
       });
 
-      if (extensions.length > 0) {
-        target = creep.pos.findClosestByPath(extensions);
-        creep.say('🏗️ 填充扩展');
-      }
-
-      // 2. 然后运输到 Spawn（主城）
-      if (!target) {
-        const spawns = creep.room.find(FIND_STRUCTURES, {
-          filter: (structure) => {
-            return structure.structureType === STRUCTURE_SPAWN &&
-                   structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0;
-          }
-        });
-
-        if (spawns.length > 0) {
-          target = creep.pos.findClosestByPath(spawns);
-          creep.say('🏰 填充主城');
-        }
-      }
-
-      // 3. 运输到 Storage（优先将能量集中到storage）
-      if (!target) {
-        const storage = creep.room.storage;
-        if (storage && storage.store.getFreeCapacity(RESOURCE_ENERGY) > 0) {
-          target = storage;
-          creep.say('🏪 填充仓库');
-        }
-      }
-
-      // 4. 运输到容器
-      if (!target) {
-        const containers = creep.room.find(FIND_STRUCTURES, {
-          filter: (structure) => {
-            return structure.structureType === STRUCTURE_CONTAINER &&
-                   structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0;
-          }
-        });
-
-        if (containers.length > 0) {
-          target = creep.pos.findClosestByPath(containers);
-          creep.say('📦 填充容器');
-        }
-      }
-
-      // 执行运输
-      if (target) {
-        let result: number;
-
-        // 目标是建筑，转移能量
-        result = creep.transfer(target, RESOURCE_ENERGY);
-
-        if (result === ERR_NOT_IN_RANGE) {
-          creep.moveTo(target, {
-            visualizePathStyle: { stroke: '#ffffff' }
-          });
-        } else if (result === OK) {
-          creep.say('🚚');
-        }
-      } else {
-        // 如果没有运输目标，尝试帮助静态矿工移动
-        if (this.shouldHelpStaticHarvester(creep)) {
-          this.helpStaticHarvester(creep);
-        } else {
-          creep.say('等待任务');
-          // 原地等待，不移动到控制器
-        }
+      if (spawns.length > 0) {
+        target = creep.pos.findClosestByPath(spawns);
+        creep.say('🏰 填充主城');
       }
     }
 
+    // 3. 运输到升级者
+    if (!target) {
+      const upgraders = creep.room.find(FIND_MY_CREEPS, {
+        filter: (c) => c.memory.role === 'upgrader' &&
+                       c.store.getFreeCapacity(RESOURCE_ENERGY) > 0
+      });
 
+      if (upgraders.length > 0) {
+        target = creep.pos.findClosestByPath(upgraders);
+        creep.say('⚡ 帮助升级者');
+      }
+    }
+
+    // 4. 运输到容器
+    if (!target) {
+      const containers = creep.room.find(FIND_STRUCTURES, {
+        filter: (structure) => {
+          return (structure.structureType === STRUCTURE_CONTAINER ||
+                  structure.structureType === STRUCTURE_STORAGE) &&
+                 structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0;
+        }
+      });
+
+      if (containers.length > 0) {
+        target = creep.pos.findClosestByPath(containers);
+        creep.say('📦 填充容器');
+      }
+    }
+
+    // 执行运输
+    if (target) {
+      let result: number;
+
+      if (target instanceof Creep) {
+        result = creep.transfer(target, RESOURCE_ENERGY);
+      } else {
+        result = creep.transfer(target, RESOURCE_ENERGY);
+      }
+
+      if (result === ERR_NOT_IN_RANGE) {
+        creep.moveTo(target, {
+          visualizePathStyle: { stroke: '#ffffff' }
+        });
+      } else if (result === OK) {
+        if (target instanceof Creep) {
+          creep.say('⚡');
+        } else {
+          creep.say('🚚');
+        }
+      }
+    } else {
+      // 如果没有运输目标，原地等待
+      creep.say('⏳ 等待');
+    }
   }
+}
+
