@@ -18,7 +18,7 @@ export class RoleUpgrader {
 
       // 在目标位置，开始工作
       creep.memory.working = true;
-      
+
       // 状态切换逻辑
       if (creep.memory.working && creep.store[RESOURCE_ENERGY] === 0) {
         creep.memory.working = false;
@@ -41,6 +41,7 @@ export class RoleUpgrader {
 
     // 检查是否在目标位置
     private static isAtTargetPosition(creep: Creep, targetPos: RoomPosition): boolean {
+      // 使用精确位置判断，和静态矿工保持一致
       return creep.pos.isEqualTo(targetPos);
     }
 
@@ -109,7 +110,7 @@ export class RoleUpgrader {
         if (!occupiedPositions.includes(pos)) {
           const [x, y] = pos.split(',').map(Number);
           const targetPos = new RoomPosition(x, y, creep.room.name);
-          
+
           // 检查位置是否可用
           if (this.isPositionSuitableForUpgrader(targetPos, creep.room)) {
             creep.memory.targetId = pos;
@@ -130,14 +131,14 @@ export class RoleUpgrader {
       for (let dx = -3; dx <= 3; dx++) {
         for (let dy = -3; dy <= 3; dy++) {
           if (dx === 0 && dy === 0) continue; // 跳过控制器本身位置
-          
+
           const x = controllerPos.x + dx;
           const y = controllerPos.y + dy;
-          
+
           if (x < 1 || x > 48 || y < 1 || y > 48) continue; // 边界检查
-          
+
           const distance = Math.abs(dx) + Math.abs(dy);
-          
+
           // 棋盘模式：曼哈顿距离为偶数的位置用于放置升级者（类似Extension位置）
           // 奇数位置留给道路，供搬运工通行
           if (distance % 2 === 0 && distance <= 3) { // 最远3格，确保能升级控制器
@@ -154,7 +155,7 @@ export class RoleUpgrader {
 
       // 按距离排序，距离近的优先
       positions.sort((a, b) => a.distance - b.distance);
-      
+
       console.log(`[升级者位置] 控制器周围找到 ${positions.length} 个可用升级位置`);
       return positions.map(p => p.pos);
     }

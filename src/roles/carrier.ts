@@ -281,28 +281,56 @@ export class RoleCarrier {
       return { success: true, shouldContinue: true, message: '正在走向升级者' };
     }
 
-    // 已经在升级者旁边，pull着升级者往控制器位置前进
-    creep.say('🚛 搬运升级者');
-    const pullResult = creep.pull(upgrader);
+    // 如果还没到达目标地点，先pull着升级者往目标地点前进
+    if (!creep.pos.isEqualTo(targetPos)) {
+      creep.say('🚛 搬运升级者');
+      const pullResult = creep.pull(upgrader);
 
-    if (pullResult === OK) {
-      // 向控制器位置移动
-      const moveResult = creep.moveTo(targetPos, {
-        visualizePathStyle: { stroke: '#00ffff' },
-        reusePath: 3
-      });
-
-      if (moveResult === OK) {
-        console.log(`[搬运工${creep.name}] 成功pull升级者向控制器位置移动`);
+      if (pullResult === OK) {
+        // 向目标地点移动
+        const moveResult = creep.moveTo(targetPos, {
+          visualizePathStyle: { stroke: '#00ffff' },
+          reusePath: 3
+        });
+        console.log(`[搬运工${creep.name}] pull结果: ${pullResult}, 移动结果: ${moveResult}`);
       } else {
-        console.log(`[搬运工${creep.name}] 移动失败: ${moveResult}`);
+        console.log(`[搬运工${creep.name}] pull失败: ${pullResult}`);
       }
 
       return { success: true, shouldContinue: true, message: '正在搬运升级者' };
-    } else {
-      console.log(`[搬运工${creep.name}] Pull升级者失败: ${pullResult}`);
-      return { success: true, shouldContinue: true, message: 'Pull失败，重试中' };
     }
+
+    // 已经到达任务地点，并且升级者在身边，对换位置
+    if (upgrader.pos.isNearTo(creep.pos)) {
+      creep.say('🔄 对调位置');
+      const pullResult = creep.pull(upgrader);
+
+      if (pullResult === OK) {
+        // 搬运工移动到升级者位置，升级者被pull到搬运工原位置（目标位置）
+        const moveResult = creep.moveTo(upgrader.pos, { reusePath: 3 });
+        console.log(`[搬运工${creep.name}] 对调位置，pull结果: ${pullResult}, 移动结果: ${moveResult}`);
+
+        // 检查升级者是否已经到达目标位置
+        if (upgrader.pos.isEqualTo(targetPos)) {
+          upgrader.memory.working = true;
+          console.log(`[搬运工${creep.name}] 搬运任务完成，升级者${upgrader.name}已就位`);
+          return { success: true, shouldContinue: false, message: '搬运任务完成' };
+        }
+      } else {
+        console.log(`[搬运工${creep.name}] 对调位置时pull失败: ${pullResult}`);
+      }
+
+      return { success: true, shouldContinue: true, message: '正在对调位置' };
+    }
+
+    // 到达目标地点但升级者不在身边，回到升级者身边
+    creep.say('🔄 回到升级者身边');
+    creep.moveTo(upgrader.pos, {
+      visualizePathStyle: { stroke: '#00ffff' },
+      reusePath: 3
+    });
+
+    return { success: true, shouldContinue: true, message: '正在回到升级者身边' };
   }
 
   // 执行收集能量任务
