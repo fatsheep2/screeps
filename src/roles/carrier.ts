@@ -38,9 +38,9 @@ export class RoleCarrier {
     // 只查房间内存，消除多重数据源
     for (const taskId in roomMemory.tasks) {
       const task = roomMemory.tasks[taskId];
-      if (task.assignedTo === creep.id && 
+      if (task.assignedTo === creep.id &&
           (task.status === 'assigned' || task.status === 'in_progress')) {
-        
+
         creep.memory.currentTaskId = task.id;
         return task;
       }
@@ -245,6 +245,31 @@ export class RoleCarrier {
       // 如果背包空了，任务完成
       if (creep.store.getUsedCapacity(RESOURCE_ENERGY) === 0) {
         return { success: true, shouldContinue: false, message: '收集任务完成' };
+      }
+    } else if (transferResult === ERR_FULL) {
+      // 存储目标已满，寻找其他存储地点
+      creep.say('🔄 找新存储');
+      const alternativeTargets = creep.room.find(FIND_STRUCTURES, {
+        filter: (structure) => {
+          return (structure.structureType === STRUCTURE_SPAWN ||
+                  structure.structureType === STRUCTURE_EXTENSION ||
+                  structure.structureType === STRUCTURE_TOWER) &&
+                 structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0;
+        }
+      });
+
+      if (alternativeTargets.length > 0) {
+        const nearestTarget = creep.pos.findClosestByPath(alternativeTargets);
+        if (nearestTarget) {
+          const altTransferResult = creep.transfer(nearestTarget, RESOURCE_ENERGY);
+          if (altTransferResult === OK) {
+            creep.say('💾 转存');
+            console.log(`[搬运工${creep.name}] 转存到备用目标: ${nearestTarget.structureType}`);
+          } else if (altTransferResult === ERR_NOT_IN_RANGE) {
+            creep.moveTo(nearestTarget);
+            return { success: true, shouldContinue: true, message: '前往备用存储' };
+          }
+        }
       }
     } else {
       console.log(`[搬运工${creep.name}] 存储能量失败: ${transferResult}`);
@@ -497,10 +522,81 @@ export class RoleCarrier {
         } else {
           creep.say('🚚');
         }
+      } else if (result === ERR_FULL) {
+        // 当前目标已满，寻找备用存储目标
+        creep.say('🔄 找备用');
+        this.handleFullStorage(creep);
       }
     } else {
       // 如果没有运输目标，原地等待
       creep.say('⏳ 等待');
+    }
+  }
+
+  // 处理存储目标已满的情况
+  private static handleFullStorage(creep: Creep): void {
+    // 寻找备用存储目标，按优先级排序
+    const alternativeTargets = creep.room.find(FIND_STRUCTURES, {
+      filter: (structure) => {
+        return (structure.structureType === STRUCTURE_SPAWN ||
+                structure.structureType === STRUCTURE_EXTENSION ||
+                structure.structureType === STRUCTURE_TOWER ||
+                structure.structureType === STRUCTURE_CONTAINER ||
+                structure.structureType === STRUCTURE_STORAGE) &&
+               structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0;
+      }
+    });
+
+    // 按优先级对目标排序：Spawn > Extension > Tower > Container > Storage
+    alternativeTargets.sort((a, b) => {
+      const priorityOrder: { [key: string]: number } = {
+        [STRUCTURE_SPAWN]: 1,
+        [STRUCTURE_EXTENSION]: 2,
+        [STRUCTURE_TOWER]: 3,
+        [STRUCTURE_CONTAINER]: 4,
+        [STRUCTURE_STORAGE]: 5
+      };
+      const priorityA = priorityOrder[a.structureType] || 999;
+      const priorityB = priorityOrder[b.structureType] || 999;
+      return priorityA - priorityB;
+    });
+
+    if (alternativeTargets.length > 0) {
+      // 找到最近的高优先级目标
+      const nearestTarget = creep.pos.findClosestByPath(alternativeTargets);
+      if (nearestTarget) {
+        const transferResult = creep.transfer(nearestTarget, RESOURCE_ENERGY);
+        if (transferResult === OK) {
+          creep.say('💾 转存');
+          console.log(`[搬运工${creep.name}] 转存到备用目标: ${nearestTarget.structureType}`);
+        } else if (transferResult === ERR_NOT_IN_RANGE) {
+          creep.moveTo(nearestTarget, {
+            visualizePathStyle: { stroke: '#00ff00' }
+          });
+          creep.say('🚶 去备用');
+        } else if (transferResult === ERR_FULL) {
+          // 如果备用目标也满了，递归寻找下一个
+          console.log(`[搬运工${creep.name}] 备用目标也满了，寻找下一个`);
+          // 移除已满的目标后重试
+          const nextTargets = alternativeTargets.filter(t => t.id !== nearestTarget.id);
+          if (nextTargets.length > 0) {
+            const nextTarget = creep.pos.findClosestByPath(nextTargets);
+            if (nextTarget && creep.pos.isNearTo(nextTarget)) {
+              const nextResult = creep.transfer(nextTarget, RESOURCE_ENERGY);
+              if (nextResult === OK) {
+                creep.say('💾 次选');
+              }
+            } else if (nextTarget) {
+              creep.moveTo(nextTarget);
+              creep.say('🚶 次选');
+            }
+          }
+        }
+      }
+    } else {
+      // 没有备用存储，暂时等待
+      creep.say('⏳ 无存储');
+      console.log(`[搬运工${creep.name}] 所有存储都满了，等待中`);
     }
   }
 }

@@ -87,11 +87,9 @@ function cleanupCompletedTransportTasks(room: Room): void {
         console.log(`[房间管理器] 收集目标不存在，删除: ${task.id}`);
       }
     } else if (task.type === 'transferEnergy') {
-      const target = Game.getObjectById(task.targetId) as StructureSpawn | StructureExtension | StructureTower | StructureContainer | StructureStorage;
-      if (!target || (target.store && target.store.getFreeCapacity(RESOURCE_ENERGY) === 0)) {
-        tasksToDelete.push(task.id);
-        console.log(`[房间管理器] 转移目标已满或不存在，删除: ${task.id}`);
-      }
+      // 清理所有transfer任务，改为搬运工自主决策
+      tasksToDelete.push(task.id);
+      console.log(`[房间管理器] 清理transfer任务，改为自主决策: ${task.id}`);
     }
   });
 
@@ -122,8 +120,8 @@ function updateTaskSystemWithNewManager(room: Room): void {
   // 扫描掉落资源，创建收集任务
   scanDroppedResourcesForCollection(room);
 
-  // 扫描建筑需求，创建转移任务
-  scanBuildingsForEnergyTransfer(room);
+  // 建筑转移改为搬运工自主决策，不创建任务
+  // scanBuildingsForEnergyTransfer(room);
 
   // 清理已完成的任务
   cleanupCompletedTransportTasks(room);
@@ -193,6 +191,10 @@ function assignPendingTasksToCarriers(room: Room): void {
 
       // 更新房间内存中的任务
       roomMemory.tasks![task.id] = task;
+
+      console.log(`[房间管理器] 分配任务 ${task.type}:${task.id} 给搬运工 ${availableCarrier.name}`);
+    } else {
+      console.log(`[房间管理器] 没有空闲搬运工执行任务 ${task.type}:${task.id}`);
     }
   }
 }
@@ -268,8 +270,12 @@ function createTransportTask(harvester: Creep): string | null {
   return task.id;
 }
 
-// 扫描掉落资源，创建收集任务
+// 扫描掉落资源，创建收集任务（每5个tick扫描一次）
 function scanDroppedResourcesForCollection(room: Room): void {
+  // 限制扫描频率，避免重复创建任务
+  if (Game.time % 5 !== 0) {
+    return;
+  }
   // 查找掉落的能量资源
   const droppedEnergy = room.find(FIND_DROPPED_RESOURCES, {
     filter: (resource) => resource.resourceType === RESOURCE_ENERGY && resource.amount > 50
@@ -287,6 +293,16 @@ function scanDroppedResourcesForCollection(room: Room): void {
 
   const allTargets = [...droppedEnergy, ...tombstones, ...ruins];
 
+  // 限制同时存在的收集任务数量
+  const existingCollectTasks = Object.values(room.memory.tasks || {}).filter((task: any) =>
+    task.type === 'collectEnergy'
+  );
+
+  if (existingCollectTasks.length >= 3) {
+    return;
+  }
+
+  let createdCount = 0;
   for (const target of allTargets) {
     // 检查是否已有收集任务
     const existingTask = Object.values(room.memory.tasks || {}).find((task: any) =>
@@ -297,6 +313,12 @@ function scanDroppedResourcesForCollection(room: Room): void {
       const taskId = createCollectEnergyTask(room, target);
       if (taskId) {
         console.log(`[房间管理器] 创建能量收集任务: ${taskId} 目标: ${target.id}`);
+        createdCount++;
+
+        // 每次扫描最多创建2个收集任务
+        if (createdCount >= 2) {
+          break;
+        }
       }
     }
   }
@@ -361,98 +383,121 @@ function createCollectEnergyTask(room: Room, target: Resource | Tombstone | Ruin
   return task.id;
 }
 
-// 扫描建筑需求，创建能量转移任务
-function scanBuildingsForEnergyTransfer(room: Room): void {
-  // 优先级顺序：Spawn > Extension > Tower > 其他
-  const priorityBuildings = [
-    // 1. Spawn和Extension（最高优先级）
-    ...room.find(FIND_STRUCTURES, {
-      filter: (structure) => {
-        return (structure.structureType === STRUCTURE_SPAWN ||
-                structure.structureType === STRUCTURE_EXTENSION) &&
-               structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0;
-      }
-    }),
+// 扫描建筑需求，创建能量转移任务（每10个tick扫描一次）
+// 注意：此功能已禁用，改为搬运工自主决策
+// function scanBuildingsForEnergyTransfer(room: Room): void {
+//   // 限制扫描频率，避免重复创建任务
+//   if (Game.time % 10 !== 0) {
+//     return;
+//   }
+//   // 优先级顺序：Spawn > Extension > Tower > 其他
+//   const priorityBuildings = [
+//     // 1. Spawn和Extension（最高优先级）
+//     ...room.find(FIND_STRUCTURES, {
+//       filter: (structure) => {
+//         return (structure.structureType === STRUCTURE_SPAWN ||
+//                 structure.structureType === STRUCTURE_EXTENSION) &&
+//                structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0;
+//       }
+//     }),
 
-    // 2. 塔（高优先级）
-    ...room.find(FIND_STRUCTURES, {
-      filter: (structure) => {
-        return structure.structureType === STRUCTURE_TOWER &&
-               structure.store.getFreeCapacity(RESOURCE_ENERGY) > 100;
-      }
-    })
-  ];
+//     // 2. 塔（高优先级）
+//     ...room.find(FIND_STRUCTURES, {
+//       filter: (structure) => {
+//         return structure.structureType === STRUCTURE_TOWER &&
+//                structure.store.getFreeCapacity(RESOURCE_ENERGY) > 100;
+//       }
+//     })
+//   ];
 
-  // 查找能量来源
-  const energySources = room.find(FIND_STRUCTURES, {
-    filter: (structure) => {
-      return (structure.structureType === STRUCTURE_CONTAINER ||
-              structure.structureType === STRUCTURE_STORAGE) &&
-             structure.store.getUsedCapacity(RESOURCE_ENERGY) > 100;
-    }
-  });
+//   // 查找能量来源
+//   const energySources = room.find(FIND_STRUCTURES, {
+//     filter: (structure) => {
+//       return (structure.structureType === STRUCTURE_CONTAINER ||
+//               structure.structureType === STRUCTURE_STORAGE) &&
+//              structure.store.getUsedCapacity(RESOURCE_ENERGY) > 100;
+//     }
+//   });
 
-  if (energySources.length === 0) {
-    return; // 没有能量来源
-  }
+//   if (energySources.length === 0) {
+//     return; // 没有能量来源
+//   }
 
-  for (const building of priorityBuildings) {
-    // 检查是否已有转移任务
-    const existingTask = Object.values(room.memory.tasks || {}).find((task: any) =>
-      task.type === 'transferEnergy' && task.targetId === building.id
-    );
+//   // 限制同时存在的transfer任务数量，避免任务爆炸
+//   const existingTransferTasks = Object.values(room.memory.tasks || {}).filter((task: any) =>
+//     task.type === 'transferEnergy'
+//   );
 
-    if (!existingTask) {
-      const nearestSource = building.pos.findClosestByRange(energySources);
-      if (nearestSource) {
-        const taskId = createTransferEnergyTask(room, nearestSource, building as StructureSpawn | StructureExtension | StructureTower | StructureContainer | StructureStorage);
-        if (taskId) {
-          console.log(`[房间管理器] 创建能量转移任务: ${taskId} ${nearestSource.id} -> ${building.id}`);
-        }
-      }
-    }
-  }
-}
+//   // 如果已有5个或更多transfer任务，不再创建新的
+//   if (existingTransferTasks.length >= 5) {
+//     return;
+//   }
+
+//   for (const building of priorityBuildings) {
+//     // 检查是否已有转移任务针对这个建筑
+//     const existingTask = Object.values(room.memory.tasks || {}).find((task: any) =>
+//       task.type === 'transferEnergy' && task.targetId === building.id
+//     );
+
+//     if (!existingTask) {
+//       const nearestSource = building.pos.findClosestByRange(energySources);
+//       if (nearestSource) {
+//         const taskId = createTransferEnergyTask(room, nearestSource, building as StructureSpawn | StructureExtension | StructureTower | StructureContainer | StructureStorage);
+//         if (taskId) {
+//           console.log(`[房间管理器] 创建能量转移任务: ${taskId} ${nearestSource.id} -> ${building.id}`);
+//         }
+
+//         // 限制每次扫描只创建2个任务，避免一次性创建太多
+//         if (Object.values(room.memory.tasks || {}).filter((task: any) =>
+//           task.type === 'transferEnergy' && task.createdAt === Game.time
+//         ).length >= 2) {
+//           break;
+//         }
+//       }
+//     }
+//   }
+// }
 
 // 创建能量转移任务
-function createTransferEnergyTask(room: Room, source: Structure, target: StructureSpawn | StructureExtension | StructureTower | StructureContainer | StructureStorage): string | null {
-  let priority: string;
+// 注意：此功能已禁用，改为搬运工自主决策
+// function createTransferEnergyTask(room: Room, source: Structure, target: StructureSpawn | StructureExtension | StructureTower | StructureContainer | StructureStorage): string | null {
+//   let priority: string;
 
-  // 根据目标建筑设定优先级 - 转移优先级降低
-  if (target.structureType === STRUCTURE_SPAWN || target.structureType === STRUCTURE_EXTENSION) {
-    priority = 'normal';  // 降低到normal
-  } else if (target.structureType === STRUCTURE_TOWER) {
-    priority = 'normal';  // 降低到normal
-  } else {
-    priority = 'low';     // 其他建筑为low
-  }
+//   // 根据目标建筑设定优先级 - 转移优先级降低
+//   if (target.structureType === STRUCTURE_SPAWN || target.structureType === STRUCTURE_EXTENSION) {
+//     priority = 'normal';  // 降低到normal
+//   } else if (target.structureType === STRUCTURE_TOWER) {
+//     priority = 'normal';  // 降低到normal
+//   } else {
+//     priority = 'low';     // 其他建筑为low
+//   }
 
-  const task = {
-    id: `${room.name}_transfer_${source.id}_${target.id}`,
-    type: 'transferEnergy',
-    priority: priority,
-    status: 'pending',
-    roomName: room.name,
-    createdAt: Game.time,
-    expiresAt: Game.time + 200,
-    sourceId: source.id,
-    sourceType: 'structure',
-    targetId: target.id,
-    targetCapacity: target.store.getFreeCapacity(RESOURCE_ENERGY),
-    assignedTo: null,
-    assignedAt: null,
-    completedAt: null,
-    errorMessage: null
-  };
+//   const task = {
+//     id: `${room.name}_transfer_${source.id}_${target.id}`,
+//     type: 'transferEnergy',
+//     priority: priority,
+//     status: 'pending',
+//     roomName: room.name,
+//     createdAt: Game.time,
+//     expiresAt: Game.time + 200,
+//     sourceId: source.id,
+//     sourceType: 'structure',
+//     targetId: target.id,
+//     targetCapacity: target.store.getFreeCapacity(RESOURCE_ENERGY),
+//     assignedTo: null,
+//     assignedAt: null,
+//     completedAt: null,
+//     errorMessage: null
+//   };
 
-  // 保存到房间内存
-  if (!room.memory.tasks) {
-    room.memory.tasks = {};
-  }
+//   // 保存到房间内存
+//   if (!room.memory.tasks) {
+//     room.memory.tasks = {};
+//   }
 
-  room.memory.tasks[task.id] = task;
-  return task.id;
-}
+//   room.memory.tasks[task.id] = task;
+//   return task.id;
+// }
 
 // 运行 Creep 角色逻辑
 function runCreepRole(creep: Creep): void {
