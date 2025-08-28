@@ -3,55 +3,60 @@ export class BuildingLayoutManager {
 
   // 主入口：更新房间建筑布局
   public static updateBuildingLayout(room: Room): void {
-    console.log(`[建筑管理] 开始更新房间 ${room.name} 的建筑布局`);
+    // 减少日志频率：每10个tick记录一次，或有实际建设时记录
+    const shouldLog = Game.time % 10 === 0;
+    
+    if (shouldLog) {
+      console.log(`[建筑管理] 检查房间 ${room.name} 建筑布局`);
+    }
     
     // 1. 优先建造矿点容器
-    this.buildSourceContainers(room);
+    const containersBuilt = this.buildSourceContainers(room);
     
     // 2. 执行棋盘式布局建设
-    this.buildCheckerboardLayout(room);
+    const layoutBuilt = this.buildCheckerboardLayout(room);
     
     // 3. 建设主要道路网络
-    this.buildMainRoadNetwork(room);
+    const roadsBuilt = this.buildMainRoadNetwork(room);
     
-    console.log(`[建筑管理] 房间 ${room.name} 建筑布局更新完成`);
+    // 只有实际建设了东西或定期日志时才输出
+    if (containersBuilt > 0 || layoutBuilt > 0 || roadsBuilt > 0 || shouldLog) {
+      console.log(`[建筑管理] 房间 ${room.name} 完成建设: 容器${containersBuilt} 布局${layoutBuilt} 道路${roadsBuilt}`);
+    }
   }
 
   // 建设棋盘式布局
-  private static buildCheckerboardLayout(room: Room): void {
+  private static buildCheckerboardLayout(room: Room): number {
     const spawn = room.find(FIND_MY_SPAWNS)[0];
     if (!spawn) {
-      console.log(`[建筑管理] 房间 ${room.name} 没有找到主城，跳过棋盘布局`);
-      return;
+      return 0; // 没有主城时返回0
     }
 
     // 计算当前建筑状态
-    const currentExtensions = room.find(FIND_MY_STRUCTURES, {
-      filter: s => s.structureType === STRUCTURE_EXTENSION
-    }).length;
-    
     const currentConstructionSites = room.find(FIND_MY_CONSTRUCTION_SITES).length;
-    const maxExtensions = this.getMaxExtensionsForRCL(room.controller?.level || 1);
-    
-    console.log(`[建筑管理] 当前Extension: ${currentExtensions}/${maxExtensions}, 建筑工地: ${currentConstructionSites}`);
     
     // 限制建筑工地数量，避免过度建设
     if (currentConstructionSites >= 5) {
-      console.log(`[建筑管理] 建筑工地过多(${currentConstructionSites})，暂停新建`);
-      return;
+      if (Game.time % 50 === 0) { // 每50tick提醒一次
+        console.log(`[建筑管理] 建筑工地过多(${currentConstructionSites})，暂停新建`);
+      }
+      return 0; // 返回建设数量
     }
+    
+    let totalBuilt = 0;
 
     // 分层建设：逐层完成后再扩展
     for (let layer = 1; layer <= 8; layer++) {
       if (this.isLayerComplete(room, spawn.pos, layer - 1)) {
         // 前一层已完成，尝试建设当前层
         const built = this.buildLayer(room, spawn.pos, layer);
+        totalBuilt += built;
         if (built > 0) {
-          console.log(`[建筑管理] 在第${layer}层建设了${built}个建筑`);
-          return; // 一次只建设一层
+          return totalBuilt; // 一次只建设一层
         }
       }
     }
+    return totalBuilt;
   }
 
   // 检查某一层是否建设完成
@@ -96,8 +101,6 @@ export class BuildingLayoutManager {
   private static buildLayer(room: Room, center: RoomPosition, layer: number): number {
     let builtCount = 0;
     const layerPositions = this.getLayerPositions(center, layer);
-    
-    console.log(`[建筑管理] 开始建设第${layer}层，共${layerPositions.length}个位置`);
     
     for (const pos of layerPositions) {
       if (!this.isPositionInRoom(pos)) continue;
@@ -205,11 +208,11 @@ export class BuildingLayoutManager {
   }
   
   // 建设矿点容器 - 优化版本使用miningSpots
-  private static buildSourceContainers(room: Room): void {
+  private static buildSourceContainers(room: Room): number {
     const roomMemory = Memory.rooms[room.name];
     if (!roomMemory || !roomMemory.miningSpots) {
       console.log(`[建筑管理] 房间 ${room.name} 没有miningSpots数据，跳过容器规划`);
-      return;
+      return 0;
     }
 
     const sources = room.find(FIND_SOURCES);
@@ -237,7 +240,7 @@ export class BuildingLayoutManager {
             const result = room.createConstructionSite(containerPos.x, containerPos.y, STRUCTURE_CONTAINER);
             if (result === OK) {
               console.log(`[建筑管理] 在矿点${i} (${source.pos.x},${source.pos.y}) 的最优位置 (${containerPos.x},${containerPos.y}) 创建容器`);
-              return; // 一次只建一个
+              return 1; // 一次只建一个
             } else {
               console.log(`[建筑管理] 创建容器失败: ${result}`);
             }
@@ -245,6 +248,7 @@ export class BuildingLayoutManager {
         }
       }
     }
+    return 0; // 没有建造任何容器
   }
   
   // 从miningSpots为指定矿点获取预计算的最优容器位置
@@ -313,9 +317,11 @@ export class BuildingLayoutManager {
   }
 
   // 建设主要道路网络
-  private static buildMainRoadNetwork(room: Room): void {
+  private static buildMainRoadNetwork(room: Room): number {
     const spawn = room.find(FIND_MY_SPAWNS)[0];
-    if (!spawn) return;
+    if (!spawn) return 0;
+    
+    let roadsBuilt = 0;
     
     const controller = room.controller;
     const sources = room.find(FIND_SOURCES);
@@ -331,6 +337,7 @@ export class BuildingLayoutManager {
         this.buildRoadToTarget(room, spawn.pos, source.pos, 'source');
       }
     }
+    return roadsBuilt;
   }
   
   // 建设到目标的道路
@@ -383,5 +390,5 @@ export function updateBuildingLayout(room: Room): void {
 // 更新道路规划（兼容性函数）
 export function updateRoadPlanning(_room: Room): void {
   // 现在由BuildingLayoutManager.buildMainRoadNetwork处理
-  console.log(`[建筑管理] 道路规划功能已集成到智能布局管理器中`);
+  // 移除重复日志输出
 }

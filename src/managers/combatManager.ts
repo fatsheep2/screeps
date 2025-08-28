@@ -30,8 +30,9 @@ export function manageCombatProduction(room: Room, hasBasic: boolean = false): v
   const roomEnergy = room.energyAvailable;
   const combatCounts = countCombatCreeps(room);
 
-  // 检查是否需要生产战斗单位 - 只生产tank用于测试
-  if (combatCounts[COMBAT_ROLES.TANK] === 0) {
+  // 只维戰1个tank用于测试，简化逻辑
+  const maxTanks = 1;
+  if (combatCounts[COMBAT_ROLES.TANK] < maxTanks) {
     const bodyParts = getOptimalCombatBodyParts(COMBAT_ROLES.TANK, roomEnergy);
     if (bodyParts.length > 0) {
       const name = `${COMBAT_ROLES.TANK}_${Game.time}_${Math.floor(Math.random() * 1000)}`;
@@ -39,13 +40,13 @@ export function manageCombatProduction(room: Room, hasBasic: boolean = false): v
         memory: {
           role: COMBAT_ROLES.TANK,
           room: room.name,
-          working: false,
-          isLeader: true // 标记为队长
+          working: false
+          // 简化tank，不需要复杂的队长标记
         }
       });
 
       if (result === OK) {
-        console.log(`生产测试用tank: ${name}`);
+        console.log(`生产测试tank: ${name}`);
         return;
       }
     }
@@ -139,64 +140,10 @@ export function updateCombatSquads(_room: Room): void {
 }
 
 // 获取房间的战斗小组信息
-export function getRoomCombatSquads(room: Room): CombatSquad[] {
-  if (!Memory.combatSquads) return [];
-
-  console.log(`[编组管理] 检查房间 ${room.name} 的可用战斗编组，总编组数: ${Object.keys(Memory.combatSquads).length}`);
-
-  const availableSquads = Object.values(Memory.combatSquads).filter(squad => {
-    console.log(`[编组管理] 检查编组 ${squad.id}: 状态=${squad.status}, 成员数=${Object.keys(squad.members).length}`);
-
-    // 检查编组状态是否为ready或forming（允许使用forming状态的编组）
-    if (squad.status !== 'ready' && squad.status !== 'forming') {
-      console.log(`[编组管理] 编组 ${squad.id} 状态为 ${squad.status}，不可用`);
-      return false;
-    }
-
-    // 检查编组是否有足够的存活成员
-    const aliveMembers = Object.values(squad.members).filter(memberName => {
-      if (!memberName) return false;
-      const member = Game.creeps[memberName];
-      const alive = member && member.hits > 0;
-      console.log(`[编组管理] 成员 ${memberName}: ${alive ? '存活' : '死亡/不存在'} (${member?.room.name || 'null'})`);
-      return alive;
-    });
-
-    // 至少需要3个成员存活
-    if (aliveMembers.length < 3) {
-      console.log(`[编组管理] 编组 ${squad.id} 只有 ${aliveMembers.length} 个存活成员，不可用`);
-      return false;
-    }
-
-    // 检查是否有成员在指定房间（作为编组的"主场"）
-    const hasMemberInRoom = aliveMembers.some(memberName => {
-      const creep = Game.creeps[memberName];
-      const inRoom = creep && creep.room.name === room.name;
-      console.log(`[编组管理] 成员 ${memberName}: ${inRoom ? '在房间' : '不在房间'} (${creep?.room.name || 'null'})`);
-      return inRoom;
-    });
-
-    // 检查是否有活跃的攻击任务
-    const hasActiveAttackTask = Memory.attackTasks &&
-      Object.values(Memory.attackTasks).some(task =>
-        task.squads.includes(squad.id) &&
-        (task.status === 'moving' || task.status === 'engaging')
-      );
-
-    console.log(`[编组管理] 编组 ${squad.id}: 有成员在房间=${hasMemberInRoom}, 有活跃任务=${hasActiveAttackTask}`);
-
-    // 如果编组中有成员在指定房间，或者编组状态为ready且没有其他任务，则可用
-    const isAvailable = hasMemberInRoom || (!hasActiveAttackTask);
-
-    if (isAvailable) {
-      console.log(`[编组管理] 编组 ${squad.id} 可用，状态: ${squad.status}，成员数: ${aliveMembers.length}`);
-    }
-
-    return isAvailable;
-  });
-
-  console.log(`[编组管理] 房间 ${room.name} 找到 ${availableSquads.length} 个可用编组`);
-  return availableSquads;
+export function getRoomCombatSquads(_room: Room): CombatSquad[] {
+  // 简化的战斗系统不使用编组，直接返回空数组
+  // 新的简化攻击命令直接使用tank单体
+  return [];
 }
 
 // 手动更新编组状态

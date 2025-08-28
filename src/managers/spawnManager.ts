@@ -144,11 +144,11 @@ function getOptimalBodyParts(role: string, availableEnergy: number, creepCounts:
 
   // 如果推荐配置能量充足，直接使用
   if (recommendedCost <= availableEnergy && recommendedParts.length > 0) {
-    console.log(`[生产管理] 使用智能配置生产${role}: ${recommendedParts.join(',')}, 成本: ${recommendedCost}`);
+    // console.log(`[生产管理] 使用智能配置生产${role}: ${recommendedParts.join(',')}, 成本: ${recommendedCost}`);
     return recommendedParts;
   }
 
-  console.log(`[生产管理] 智能配置成本过高(${recommendedCost}>${availableEnergy})，回退到传统配置`);
+  // console.log(`[生产管理] 智能配置成本过高(${recommendedCost}>${availableEnergy})，回退到传统配置`);
 
   // 回退到原有逻辑
   const baseParts = BASE_BODY_PARTS[role as keyof typeof BASE_BODY_PARTS];

@@ -339,7 +339,7 @@ export class ProductionManager {
     // 按顺序排列：WORK -> CARRY -> MOVE
     const body = [...workParts, ...carryParts, ...moveParts];
 
-    console.log(`[生产管理] 建筑者配置: ${units}组(2WORK+2CARRY+1MOVE)，总部件: ${workParts.length}W+${carryParts.length}C+${moveParts.length}M，总成本: ${units * unitCost}`);
+    // console.log(`[生产管理] 建筑者配置: ${units}组(2WORK+2CARRY+1MOVE)，总部件: ${workParts.length}W+${carryParts.length}C+${moveParts.length}M，总成本: ${units * unitCost}`);
     return body;
   }
 }

@@ -219,7 +219,7 @@ function assignPendingTasksToCarriers(room: Room): void {
 
       console.log(`[房间管理器] 分配任务 ${task.type}:${task.id} 给搬运工 ${availableCarrier.name}`);
     } else {
-      console.log(`[房间管理器] 没有空闲搬运工执行任务 ${task.type}:${task.id}`);
+      // console.log(`[房间管理器] 没有空闲搬运工执行任务 ${task.type}:${task.id}`);
     }
   }
 }
