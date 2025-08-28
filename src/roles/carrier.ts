@@ -1,4 +1,5 @@
 import { Task } from '../types/tasks';
+import { TaskBatchingManager } from '../managers/taskBatchingManager';
 
 export class RoleCarrier {
   public static run(creep: Creep): void {
@@ -24,10 +25,36 @@ export class RoleCarrier {
     // 检查是否卡住
     this.checkIfStuck(creep);
 
+    // 优先处理批处理任务
+    if (creep.memory.currentTaskBatch && creep.memory.currentTaskBatch.length > 0) {
+      this.executeBatchTasks(creep);
+      return;
+    }
+
     // 从任务列表查找分配给自己的任务
     const myTask = this.findMyTask(creep);
     if (myTask) {
       this.executeTask(creep, myTask);
+      return;
+    }
+
+    // 没有任务时，尝试获取批处理任务
+    const batchTasks = TaskBatchingManager.createBatchedTask(creep, creep.room);
+    if (batchTasks.length > 1) {
+      TaskBatchingManager.assignBatchToCarrier(creep, batchTasks, creep.room);
+      creep.say('📋 批处理');
+      return;
+    } else if (batchTasks.length === 1) {
+      // 单个任务，正常分配
+      const task = batchTasks[0];
+      const roomMemory = Memory.rooms[creep.room.name];
+      if (roomMemory && roomMemory.tasks) {
+        task.assignedTo = creep.id;
+        task.assignedAt = Game.time;
+        task.status = 'assigned';
+        creep.memory.currentTaskId = task.id;
+        roomMemory.tasks[task.id] = task;
+      }
       return;
     }
 
@@ -161,6 +188,71 @@ export class RoleCarrier {
       // 未知任务类型，标记为失败
       console.log(`[搬运工${creep.name}] 未知任务类型: ${task.type}`);
       this.completeTask(creep, task);
+    }
+  }
+
+  // 执行批处理任务
+  private static executeBatchTasks(creep: Creep): void {
+    if (!creep.memory.currentTaskBatch || creep.memory.currentTaskBatch.length === 0) {
+      return;
+    }
+
+    const currentIndex = creep.memory.currentTaskIndex || 0;
+    const taskId = creep.memory.currentTaskBatch[currentIndex];
+    const roomMemory = Memory.rooms[creep.room.name];
+
+    if (!roomMemory || !roomMemory.tasks || !roomMemory.tasks[taskId]) {
+      // 任务不存在，跳到下一个
+      this.nextBatchTask(creep);
+      return;
+    }
+
+    const task = roomMemory.tasks[taskId];
+    console.log(`[搬运工${creep.name}] 执行批处理任务 ${currentIndex + 1}/${creep.memory.currentTaskBatch.length}: ${task.type} - ${task.id}`);
+
+    // 执行当前任务
+    let result = { shouldContinue: true };
+
+    if (task.type === 'collectEnergy') {
+      result = this.executeCollectEnergyTask(creep, task);
+    } else if (task.type === 'supplyEnergy') {
+      result = this.executeSupplyEnergyTask(creep, task);
+    } else if (task.type === 'deliverToSpawn') {
+      result = this.executeDeliverToSpawnTask(creep, task);
+    } else if (task.type === 'deliverToCreep') {
+      result = this.executeDeliverToCreepTask(creep, task);
+    } else {
+      console.log(`[搬运工${creep.name}] 批处理中未支持的任务类型: ${task.type}`);
+      result.shouldContinue = false;
+    }
+
+    // 如果当前任务完成，进入下一个任务
+    if (!result.shouldContinue) {
+      task.status = 'completed';
+      roomMemory.tasks[taskId] = task;
+      this.nextBatchTask(creep);
+    }
+  }
+
+  // 进入下一个批处理任务
+  private static nextBatchTask(creep: Creep): void {
+    if (!creep.memory.currentTaskBatch) return;
+
+    const currentIndex = creep.memory.currentTaskIndex || 0;
+    const nextIndex = currentIndex + 1;
+
+    if (nextIndex >= creep.memory.currentTaskBatch.length) {
+      // 所有批处理任务完成
+      console.log(`[搬运工${creep.name}] 完成所有批处理任务 (${creep.memory.currentTaskBatch.length}个)`);
+      delete creep.memory.currentTaskBatch;
+      delete creep.memory.currentTaskIndex;
+      delete creep.memory.targetId;
+      creep.say('✅ 批完成');
+    } else {
+      // 进入下一个任务
+      creep.memory.currentTaskIndex = nextIndex;
+      delete creep.memory.targetId; // 清除目标，让下个任务重新寻找
+      console.log(`[搬运工${creep.name}] 进入批处理任务 ${nextIndex + 1}/${creep.memory.currentTaskBatch.length}`);
     }
   }
 

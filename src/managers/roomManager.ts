@@ -8,6 +8,7 @@ import { countRoomCreeps, hasBasicCreeps } from '../utils/creepUtils';
 import { RoleUpgrader } from '../roles/upgrader';
 import { RoleStaticHarvester } from '../roles/staticHarvester';
 import { RoleBuilder } from '../roles/builder';
+import { CarrierLoadBalancer } from './carrierLoadBalancer';
 import { RoleCarrier } from '../roles/carrier';
 import { RoleWarrior } from '../roles/warrior';
 import { RoleTank } from '../roles/tank';
@@ -225,64 +226,29 @@ function assignPendingTasksToCarriers(room: Room): void {
 
 // 智能选择最合适的搬运工执行任务
 function selectBestCarrierForTask(carriers: Creep[], task: any): Creep | null {
-  // 先过滤出空闲的搬运工
-  const availableCarriers = carriers.filter(carrier => !carrier.memory.currentTaskId);
+
+  // 使用负载均衡器选择最优搬运工
+  const availableCarriers = carriers.filter(carrier =>
+    !carrier.memory.currentTaskId &&
+    (!carrier.memory.currentTaskBatch || carrier.memory.currentTaskBatch.length === 0)
+  );
 
   if (availableCarriers.length === 0) {
     return null; // 没有空闲搬运工
   }
 
-  // 判断是否为供给任务
-  const isSupplyTask = task.type === 'supplyEnergy' ||
-                      task.type === 'deliverToSpawn' ||
-                      task.type === 'deliverToCreep';
+  // 使用负载均衡器选择最佳搬运工
+  const selectedCarrier = CarrierLoadBalancer.selectOptimalCarrier(availableCarriers, task, true);
 
-  if (!isSupplyTask) {
-    // 非供给任务，使用原有逻辑：选择第一个空闲的
-    return availableCarriers[0];
+  if (selectedCarrier) {
+    console.log(`[任务分配] 负载均衡选择搬运工 ${selectedCarrier.name} 执行 ${task.type}`);
   }
 
-  // 供给任务的智能选择逻辑
-  const requiredAmount = task.requiredAmount || 50;
-
-  // 第一优先级：寻找能量充足的搬运工
-  const energySufficientCarriers = availableCarriers.filter(carrier =>
-    carrier.store.getUsedCapacity(RESOURCE_ENERGY) >= requiredAmount
-  );
-
-  if (energySufficientCarriers.length > 0) {
-    // 有能量充足的搬运工，选择距离最近的
-    const taskPosition = getTaskPosition(task);
-    if (taskPosition) {
-      const closest = taskPosition.findClosestByPath(energySufficientCarriers);
-      if (closest) {
-        console.log(`[任务分配] 选择能量充足的搬运工 ${closest.name} (${closest.store.getUsedCapacity(RESOURCE_ENERGY)}/${requiredAmount})`);
-        return closest;
-      }
-    }
-
-    // 如果无法计算距离，选择第一个能量充足的
-    console.log(`[任务分配] 选择能量充足的搬运工 ${energySufficientCarriers[0].name}`);
-    return energySufficientCarriers[0];
-  }
-
-  // 第二优先级：没有能量充足的搬运工，选择距离最近的
-  const taskPosition = getTaskPosition(task);
-  if (taskPosition) {
-    const closest = taskPosition.findClosestByPath(availableCarriers);
-    if (closest) {
-      console.log(`[任务分配] 无充足能量搬运工，选择最近的 ${closest.name} (距离优先)`);
-      return closest;
-    }
-  }
-
-  // 最后兜底：选择第一个空闲的
-  console.log(`[任务分配] 兜底选择搬运工 ${availableCarriers[0].name}`);
-  return availableCarriers[0];
+  return selectedCarrier;
 }
 
-// 获取任务的位置信息
-function getTaskPosition(task: any): RoomPosition | null {
+// 获取任务的位置信息 (供其他模块使用)
+export function getTaskPosition(task: any): RoomPosition | null {
   try {
     // 尝试从不同的位置字段获取坐标
     let x: number, y: number, roomName: string;

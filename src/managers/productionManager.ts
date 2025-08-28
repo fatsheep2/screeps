@@ -1,4 +1,6 @@
 // 智能单位生产管理器
+import { RoleUpgrader } from '../roles/upgrader';
+
 export class ProductionManager {
   // 工作部件效率常量
   private static readonly WORK_EFFICIENCY = {
@@ -133,8 +135,7 @@ export class ProductionManager {
   // 计算最优升级者数量
   private static calculateOptimalUpgraders(room: Room, rcl: number, _limits: any): number {
     // 首先获取可用位置数量作为硬性上限
-    const { StaticUpgrader } = require('../roles/upgrader');
-    const maxPositions = StaticUpgrader.getAvailableUpgraderPositionCount(room);
+    const maxPositions = RoleUpgrader.getAvailableUpgraderPositionCount(room);
 
     if (maxPositions === 0) {
       console.log(`[生产管理] 房间 ${room.name} 没有找到可用的升级者位置，不生产升级者`);
