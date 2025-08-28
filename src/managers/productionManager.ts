@@ -132,6 +132,15 @@ export class ProductionManager {
 
   // 计算最优升级者数量
   private static calculateOptimalUpgraders(room: Room, rcl: number, _limits: any): number {
+    // 首先获取可用位置数量作为硬性上限
+    const { StaticUpgrader } = require('../roles/upgrader');
+    const maxPositions = StaticUpgrader.getAvailableUpgraderPositionCount(room);
+
+    if (maxPositions === 0) {
+      console.log(`[生产管理] 房间 ${room.name} 没有找到可用的升级者位置，不生产升级者`);
+      return 0;
+    }
+
     // 根据RCL调整升级者数量
     const baseUpgraders = Math.max(1, Math.floor(rcl / 2));
 
@@ -139,19 +148,26 @@ export class ProductionManager {
     const spawn = room.find(FIND_MY_SPAWNS)[0];
     const controller = room.controller;
 
+    let optimalCount = baseUpgraders;
+
     if (spawn && controller) {
       const distance = spawn.pos.getRangeTo(controller);
       if (distance > 20) {
-        return Math.max(baseUpgraders - 1, 1); // 距离远减少升级者
+        optimalCount = Math.max(baseUpgraders - 1, 1); // 距离远减少升级者
       }
     }
 
     // 高等级房间减少升级者，专注其他任务
     if (rcl >= 6) {
-      return Math.max(1, Math.floor(baseUpgraders / 2));
+      optimalCount = Math.max(1, Math.floor(baseUpgraders / 2));
     }
 
-    return baseUpgraders;
+    // 以可用位置数量为上限
+    const finalCount = Math.min(optimalCount, maxPositions);
+
+    console.log(`[生产管理] 房间 ${room.name} 升级者计算: 基础${baseUpgraders}个, 优化后${optimalCount}个, 可用位置${maxPositions}个, 最终${finalCount}个`);
+
+    return finalCount;
   }
 
   // 计算最优建筑者数量

@@ -100,19 +100,30 @@ export class RoleUpgrader {
       const controller = creep.room.controller;
       if (!controller) return;
 
-      // 获取房间中所有静态升级者
-      const staticUpgraders = creep.room.find(FIND_MY_CREEPS, {
-        filter: (c) => c.memory.role === 'upgrader' && c.memory.targetId
+      // 使用实际的升级者数量而不是房间内存中的滞后值
+      // 获取房间中所有静态升级者（包括已分配位置和未分配位置的）
+      const allUpgraders = creep.room.find(FIND_MY_CREEPS, {
+        filter: (c) => c.memory.role === 'upgrader'
       });
 
-      // 在控制器7x7范围内按棋盘模式寻找升级者位置
+      const staticUpgraders = allUpgraders.filter(c => c.memory.targetId);
+
+      console.log(`[升级者位置] 当前有${allUpgraders.length}个升级者，其中${staticUpgraders.length}个已分配位置`);
+
+      // 在控制器7x7范围内寻找升级者位置（按距离主城排序）
       const controllerPos = controller.pos;
-      const upgraderPositions = this.getUpgraderPositions(controllerPos);
+      const allAvailablePositions = this.getUpgraderPositions(controllerPos);
+
+      // 根据实际升级者数量确定需要的位置数量
+      const neededPositions = allUpgraders.length;
+      const upgraderPositions = allAvailablePositions.slice(0, neededPositions);
+
+      console.log(`[升级者位置] 为${neededPositions}个升级者选择前${upgraderPositions.length}个最优位置`);
 
       // 检查哪些位置已被占用
       const occupiedPositions = staticUpgraders.map(c => c.memory.targetId);
 
-      // 按优先级分配位置（距离控制器越近优先级越高）
+      // 按优先级分配位置（距离主城最近的优先）
       for (const pos of upgraderPositions) {
         if (!occupiedPositions.includes(pos)) {
           const [x, y] = pos.split(',').map(Number);
@@ -121,49 +132,94 @@ export class RoleUpgrader {
           // 检查位置是否可用
           if (this.isPositionSuitableForUpgrader(targetPos, creep.room)) {
             creep.memory.targetId = pos;
-            console.log(`静态升级者 ${creep.name} 分配到升级位置 ${pos} (距离控制器${controllerPos.getRangeTo(targetPos)}格)`);
+
+            // 计算距离信息
+            const distanceToController = controllerPos.getRangeTo(targetPos);
+            const spawns = creep.room.find(FIND_MY_SPAWNS);
+            const distanceToSpawn = spawns.length > 0 ? spawns[0].pos.getRangeTo(targetPos) : 0;
+
+            console.log(`静态升级者 ${creep.name} 分配到升级位置 ${pos} (距控制器${distanceToController}格, 距主城${distanceToSpawn}格)`);
             return;
           }
         }
       }
 
-      console.log(`静态升级者 ${creep.name} 没有找到可用的升级位置`);
+      console.log(`静态升级者 ${creep.name} 没有找到可用的升级位置 (已有${staticUpgraders.length}个已分配，总共${allUpgraders.length}个升级者)`);
     }
 
-    // 获取控制器周围的棋盘式升级者位置（按距离排序）
-    private static getUpgraderPositions(controllerPos: RoomPosition): string[] {
-      const positions: { pos: string; distance: number }[] = [];
+    // 获取可用升级者位置数量（公开方法，供生产管理器使用）
+    public static getAvailableUpgraderPositionCount(room: Room): number {
+      if (!room.controller || !room.controller.my) return 0;
 
-      // 在7x7范围内寻找合适位置
+      const positions = this.getUpgraderPositions(room.controller.pos);
+      return positions.length;
+    }
+
+    // 获取控制器周围的升级者位置（7x7范围，按距离主城排序）
+    private static getUpgraderPositions(controllerPos: RoomPosition): string[] {
+      const positions: { pos: string; distanceToController: number; distanceToSpawn: number }[] = [];
+      const room = Game.rooms[controllerPos.roomName];
+
+      // 找到房间的主城（Spawn）位置
+      const spawns = room.find(FIND_MY_SPAWNS);
+      const spawnPos = spawns.length > 0 ? spawns[0].pos : controllerPos;
+
+                                    // 在7x7范围内寻找合适位置（以控制器为中心）
+      let totalScanned = 0;
+      let validTerrain = 0;
+      let checkerboardPositions = 0;
+
       for (let dx = -3; dx <= 3; dx++) {
         for (let dy = -3; dy <= 3; dy++) {
           if (dx === 0 && dy === 0) continue; // 跳过控制器本身位置
+          totalScanned++;
 
           const x = controllerPos.x + dx;
           const y = controllerPos.y + dy;
 
           if (x < 1 || x > 48 || y < 1 || y > 48) continue; // 边界检查
 
-          const distance = Math.abs(dx) + Math.abs(dy);
+          const terrain = Game.map.getRoomTerrain(controllerPos.roomName);
+          if (terrain.get(x, y) !== TERRAIN_MASK_WALL) {
+            validTerrain++;
+            const pos = new RoomPosition(x, y, controllerPos.roomName);
 
-          // 棋盘模式：曼哈顿距离为偶数的位置用于放置升级者（类似Extension位置）
-          // 奇数位置留给道路，供搬运工通行
-          if (distance % 2 === 0 && distance <= 3) { // 最远3格，确保能升级控制器
-            const terrain = Game.map.getRoomTerrain(controllerPos.roomName);
-            if (terrain.get(x, y) !== TERRAIN_MASK_WALL) {
+            // 棋盘布局：以主城坐标为基准，使用相同的奇偶性模式
+            // 这样便于后期铺路规划
+            const isCheckerboard = (x + y) % 2 === (spawnPos.x + spawnPos.y) % 2;
+
+            console.log(`[升级者位置] 检查位置(${x},${y}): 棋盘=${isCheckerboard}, 位置模=${(x + y) % 2}, 主城模=${(spawnPos.x + spawnPos.y) % 2}`);
+
+            // 选择棋盘位置，为搬运工留出通道
+            if (isCheckerboard) {
+              checkerboardPositions++;
+              const distanceToSpawn = spawnPos.getRangeTo(pos);
+              const distanceToController = Math.max(Math.abs(dx), Math.abs(dy));
+
               positions.push({
                 pos: `${x},${y}`,
-                distance: distance
+                distanceToController: distanceToController,
+                distanceToSpawn: distanceToSpawn
               });
             }
           }
         }
       }
 
-      // 按距离排序，距离近的优先
-      positions.sort((a, b) => a.distance - b.distance);
+      console.log(`[升级者位置] 调试信息: 扫描${totalScanned}个位置, 有效地形${validTerrain}个, 棋盘位置${checkerboardPositions}个`);
 
-      console.log(`[升级者位置] 控制器周围找到 ${positions.length} 个可用升级位置`);
+      // 按优先级排序：只考虑距离主城，便于能量配送
+      positions.sort((a, b) => {
+        return a.distanceToSpawn - b.distanceToSpawn;
+      });
+
+      // 输出详细的位置信息
+      const positionDetails = positions.slice(0, 10).map(p =>
+        `(${p.pos}) 距控制器${p.distanceToController}格,距主城${p.distanceToSpawn}格`
+      ).join(', ');
+
+      console.log(`[升级者位置] 控制器周围找到 ${positions.length} 个可用升级位置，按距离主城排序:`);
+      console.log(`[升级者位置] 前10个最优位置: ${positionDetails}`);
       return positions.map(p => p.pos);
     }
 
@@ -242,12 +298,20 @@ export class RoleUpgrader {
           // 等待超时，转为自行获取能量
           delete (creep.memory as any).requestEnergy;
           delete (creep.memory as any).lastRequestTime;
+          console.log(`[升级者${creep.name}] 等待配送超时，无法自行获取能量（无MOVE部件）`);
+          creep.say('❌ 无能量');
         } else {
+          creep.say('⏳ 等待配送');
         }
         return;
       }
 
       // 没有请求标记，说明是首次或自行获取模式
+      // 静态升级者无法自行获取能量，必须请求配送
+      if (creep.store.getFreeCapacity(RESOURCE_ENERGY) > 0) {
+        (creep.memory as any).requestEnergy = true;
+        console.log(`[升级者${creep.name}] 需要能量，发起配送请求`);
+      }
     }
 
 

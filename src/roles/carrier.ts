@@ -883,35 +883,50 @@ export class RoleCarrier {
 
   // 从容器获取特定数量的能量
   private static getEnergyFromContainer(creep: Creep, neededAmount: number): { success: boolean; shouldContinue: boolean; message?: string } {
-    // 优先从Storage和Container获取能量
-    const energySources = creep.room.find(FIND_STRUCTURES, {
-      filter: structure => (structure.structureType === STRUCTURE_CONTAINER ||
-                           structure.structureType === STRUCTURE_STORAGE) &&
+    let target: Structure | null = null;
+
+    // 1. 优先从Container获取能量（避免消耗Storage中的储备）
+    const containers = creep.room.find(FIND_STRUCTURES, {
+      filter: structure => structure.structureType === STRUCTURE_CONTAINER &&
                           structure.store.getUsedCapacity(RESOURCE_ENERGY) >= neededAmount
     });
 
-    if (energySources.length === 0) {
-      // 没有足够能量的容器，寻找任何有能量的容器
+    if (containers.length > 0) {
+      target = creep.pos.findClosestByPath(containers);
+      if (target) {
+        creep.say('📦 从容器获取');
+      }
+    }
+
+    // 2. 如果Container没有足够能量，再从Storage获取
+    if (!target) {
+      const storage = creep.room.storage;
+      if (storage && storage.store.getUsedCapacity(RESOURCE_ENERGY) >= neededAmount) {
+        target = storage;
+        creep.say('🏪 从仓库获取');
+      }
+    }
+
+    // 3. 最后尝试从任何有能量的Container或Storage获取
+    if (!target) {
       const anyEnergySources = creep.room.find(FIND_STRUCTURES, {
         filter: structure => (structure.structureType === STRUCTURE_CONTAINER ||
                              structure.structureType === STRUCTURE_STORAGE) &&
                             structure.store.getUsedCapacity(RESOURCE_ENERGY) > 0
       });
 
-      if (anyEnergySources.length === 0) {
-        creep.say('❌ 无能量源');
-        console.log(`[搬运工${creep.name}] 房间内没有能量源`);
-        return { success: false, shouldContinue: false, message: '没有能量源' };
+      if (anyEnergySources.length > 0) {
+        target = creep.pos.findClosestByPath(anyEnergySources);
+        if (target) {
+          creep.say('⚡ 获取能量');
+        }
       }
-
-      energySources.push(...anyEnergySources);
     }
 
-    // 选择最近的能量源
-    const target = creep.pos.findClosestByPath(energySources);
     if (!target) {
-      creep.say('❌ 无路径');
-      return { success: false, shouldContinue: false, message: '无法到达能量源' };
+      creep.say('❌ 无能量源');
+      console.log(`[搬运工${creep.name}] 房间内没有足够的能量源`);
+      return { success: false, shouldContinue: false, message: '没有能量源' };
     }
 
     // 移动到目标并获取能量
@@ -931,52 +946,52 @@ export class RoleCarrier {
   }
 
   // 从最佳来源获取能量
-  private static getEnergyFromBestSource(creep: Creep): { success: boolean; shouldContinue: boolean; message?: string } {
-    // 优先从容器获取能量
-    const containers = creep.room.find(FIND_STRUCTURES, {
-      filter: structure => (structure.structureType === STRUCTURE_CONTAINER ||
-                           structure.structureType === STRUCTURE_STORAGE) &&
-                          structure.store.getUsedCapacity(RESOURCE_ENERGY) > 0
-    });
+  // private static getEnergyFromBestSource(creep: Creep): { success: boolean; shouldContinue: boolean; message?: string } {
+  //   // 优先从容器获取能量
+  //   const containers = creep.room.find(FIND_STRUCTURES, {
+  //     filter: structure => (structure.structureType === STRUCTURE_CONTAINER ||
+  //                          structure.structureType === STRUCTURE_STORAGE) &&
+  //                         structure.store.getUsedCapacity(RESOURCE_ENERGY) > 0
+  //   });
 
-    if (containers.length > 0) {
-      const nearestContainer = creep.pos.findClosestByPath(containers);
-      if (nearestContainer) {
-        const withdrawResult = creep.withdraw(nearestContainer, RESOURCE_ENERGY);
-        if (withdrawResult === ERR_NOT_IN_RANGE) {
-          creep.moveTo(nearestContainer);
-          creep.say('📦 取能量');
-          return { success: true, shouldContinue: true, message: '前往能量来源' };
-        } else if (withdrawResult === OK) {
-          creep.say('📦 获取');
-          return { success: true, shouldContinue: true, message: '获取能量成功' };
-        }
-      }
-    }
+  //   if (containers.length > 0) {
+  //     const nearestContainer = creep.pos.findClosestByPath(containers);
+  //     if (nearestContainer) {
+  //       const withdrawResult = creep.withdraw(nearestContainer, RESOURCE_ENERGY);
+  //       if (withdrawResult === ERR_NOT_IN_RANGE) {
+  //         creep.moveTo(nearestContainer);
+  //         creep.say('📦 取能量');
+  //         return { success: true, shouldContinue: true, message: '前往能量来源' };
+  //       } else if (withdrawResult === OK) {
+  //         creep.say('📦 获取');
+  //         return { success: true, shouldContinue: true, message: '获取能量成功' };
+  //       }
+  //     }
+  //   }
 
-    // 如果没有容器，从掉落资源获取
-    const droppedEnergy = creep.room.find(FIND_DROPPED_RESOURCES, {
-      filter: resource => resource.resourceType === RESOURCE_ENERGY
-    });
+  //   // 如果没有容器，从掉落资源获取
+  //   const droppedEnergy = creep.room.find(FIND_DROPPED_RESOURCES, {
+  //     filter: resource => resource.resourceType === RESOURCE_ENERGY
+  //   });
 
-    if (droppedEnergy.length > 0) {
-      const nearestEnergy = creep.pos.findClosestByPath(droppedEnergy);
-      if (nearestEnergy) {
-        const pickupResult = creep.pickup(nearestEnergy);
-        if (pickupResult === ERR_NOT_IN_RANGE) {
-          creep.moveTo(nearestEnergy);
-          creep.say('📦 捡能量');
-          return { success: true, shouldContinue: true, message: '前往掉落能量' };
-        } else if (pickupResult === OK) {
-          creep.say('📦 捡取');
-          return { success: true, shouldContinue: true, message: '捡取能量成功' };
-        }
-      }
-    }
+  //   if (droppedEnergy.length > 0) {
+  //     const nearestEnergy = creep.pos.findClosestByPath(droppedEnergy);
+  //     if (nearestEnergy) {
+  //       const pickupResult = creep.pickup(nearestEnergy);
+  //       if (pickupResult === ERR_NOT_IN_RANGE) {
+  //         creep.moveTo(nearestEnergy);
+  //         creep.say('📦 捡能量');
+  //         return { success: true, shouldContinue: true, message: '前往掉落能量' };
+  //       } else if (pickupResult === OK) {
+  //         creep.say('📦 捡取');
+  //         return { success: true, shouldContinue: true, message: '捡取能量成功' };
+  //       }
+  //     }
+  //   }
 
-    // 没有可用能量来源
-    console.log(`[搬运工${creep.name}] 没有找到可用的能量来源`);
-    return { success: false, shouldContinue: false, message: '没有能量来源' };
-  }
+  //   // 没有可用能量来源
+  //   console.log(`[搬运工${creep.name}] 没有找到可用的能量来源`);
+  //   return { success: false, shouldContinue: false, message: '没有能量来源' };
+  // }
 }
 
