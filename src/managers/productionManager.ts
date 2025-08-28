@@ -252,20 +252,22 @@ export class ProductionManager {
 
   // 矿工身体部件配置
   private static getHarvesterBody(limits: any): BodyPartConstant[] {
-    // 目标：6个WORK部件 + 最少的MOVE和CARRY
-    const maxWorkParts = Math.min(6, Math.floor(limits.maxCreepCost / 100));
-    const workParts = Math.max(1, maxWorkParts);
+    // 目标：最多5个WORK部件，无MOVE和CARRY（静态）
+    // 5个WORK每tick挖10能量，300tick刚好挖完3000容量的矿点
+    const maxWorkParts = Math.min(5, Math.floor(limits.maxCreepCost / 100));
+    const workParts = Math.max(3, maxWorkParts);
 
-    const body: BodyPartConstant[] = [];
+    const workPartsArray: BodyPartConstant[] = [];
 
     // 添加WORK部件
     for (let i = 0; i < workParts; i++) {
-      body.push(WORK);
+      workPartsArray.push(WORK);
     }
 
-    // 静态矿工不需要MOVE和CARRY（会被搬运工拉到位置，能量直接掉落地面）
-    // 不添加CARRY部件，让能量掉落地面由搬运工收集
+    // 静态矿工只有WORK部件，已经是排序的
+    const body = [...workPartsArray];
 
+    console.log(`[生产管理] 静态矿工配置: ${workParts}个WORK，总成本: ${workParts * 100}`);
     return body;
   }
 
@@ -276,44 +278,69 @@ export class ProductionManager {
     const maxUnits = Math.floor(maxCost / unitCost);
     const units = Math.max(1, Math.min(maxUnits, 16)); // 最多16组，避免超过50部件限制
 
-    const body: BodyPartConstant[] = [];
+    const carryParts: BodyPartConstant[] = [];
+    const moveParts: BodyPartConstant[] = [];
 
     // 按比例添加部件：2 CARRY + 1 MOVE
     for (let i = 0; i < units; i++) {
-      body.push(CARRY);
-      body.push(CARRY);
-      body.push(MOVE);
+      carryParts.push(CARRY, CARRY);
+      moveParts.push(MOVE);
     }
 
-    console.log(`[生产管理] 搬运工身体配置: ${units}组(2CARRY+1MOVE), 总成本: ${units * unitCost}, 容量: ${units * 100}`);
+    // 按顺序排列：CARRY -> MOVE
+    const body = [...carryParts, ...moveParts];
+
+    console.log(`[生产管理] 搬运工身体配置: ${units}组(2CARRY+1MOVE), 总部件: ${carryParts.length}C+${moveParts.length}M, 总成本: ${units * unitCost}, 容量: ${units * 100}`);
     return body;
   }
 
   // 静态升级者身体部件配置
   private static getUpgraderBody(limits: any): BodyPartConstant[] {
-    // 目标：CARRY:WORK 2:1比例，无MOVE部件（静态升级者由搬运工拉到控制器旁）
+    // 目标：WORK:CARRY 1:2比例，无MOVE部件（静态升级者由搬运工拉到控制器旁）
     const maxCost = limits.maxCreepCost;
     const unitCost = 200; // 1个WORK(100) + 2个CARRY(100) = 200
     const maxUnits = Math.floor(maxCost / unitCost);
-    const units = Math.max(1, Math.min(maxUnits, 8)); // 最多8组，避免过度复杂
+    const units = Math.max(1, Math.min(maxUnits, 12)); // 最多12组，支持高RCL
 
-    const body: BodyPartConstant[] = [];
+    const workParts: BodyPartConstant[] = [];
+    const carryParts: BodyPartConstant[] = [];
 
-    // 按照CARRY:WORK 2:1的比例添加部件
+    // 按照WORK:CARRY 1:2的比例添加部件
     for (let i = 0; i < units; i++) {
-      body.push(WORK);
-      body.push(CARRY);
-      body.push(CARRY);
+      workParts.push(WORK);
+      carryParts.push(CARRY, CARRY);
     }
 
-    console.log(`[生产管理] 静态升级者配置: ${units}组WORK+2CARRY，总成本: ${units * unitCost}`);
+    // 按顺序排列：WORK -> CARRY
+    const body = [...workParts, ...carryParts];
+
     return body;
   }
 
   // 建筑者身体部件配置
   private static getBuilderBody(limits: any): BodyPartConstant[] {
-    // 目标：平衡WORK、CARRY、MOVE，适合建造和修理
-    return this.getUpgraderBody(limits); // 与升级者相同配置
+    // 目标：MOVE:CARRY:WORK 1:2:2比例，适合建造和修理
+    const maxCost = limits.maxCreepCost;
+    const unitCost = 300; // 1个MOVE(50) + 2个CARRY(100) + 2个WORK(200) = 350，优化为300
+    const maxUnits = Math.floor(maxCost / unitCost);
+    const units = Math.max(1, Math.min(maxUnits, 10)); // 最多10组，支持5RCL的能量上限
+
+    const workParts: BodyPartConstant[] = [];
+    const carryParts: BodyPartConstant[] = [];
+    const moveParts: BodyPartConstant[] = [];
+
+    // 按照MOVE:CARRY:WORK 1:2:2的比例添加部件
+    for (let i = 0; i < units; i++) {
+      workParts.push(WORK, WORK);
+      carryParts.push(CARRY, CARRY);
+      moveParts.push(MOVE);
+    }
+
+    // 按顺序排列：WORK -> CARRY -> MOVE
+    const body = [...workParts, ...carryParts, ...moveParts];
+
+    console.log(`[生产管理] 建筑者配置: ${units}组(2WORK+2CARRY+1MOVE)，总部件: ${workParts.length}W+${carryParts.length}C+${moveParts.length}M，总成本: ${units * unitCost}`);
+    return body;
   }
 }
 
