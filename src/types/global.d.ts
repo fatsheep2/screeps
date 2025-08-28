@@ -35,6 +35,18 @@ declare global {
     currentTaskId?: string; // 当前执行的任务ID
     testMoveToRoom?: string; // 测试用：目标房间名称
     stuckCounter?: number; // 卡住计数器，用于检测是否在同一个位置徘徊
+    // 跨房间移动测试相关字段
+    testStartTime?: number;
+    testStartRoom?: string;
+    testStartPos?: { x: number, y: number };
+    moveTrace?: string[];
+    integrationTest?: {
+      scenario: string;
+      startTime: number;
+      startRoom: string;
+      targetRoom: string;
+      expectedDuration: number;
+    };
     // 任务批处理相关
     currentTaskBatch?: string[]; // 当前执行的批处理任务ID列表
     currentTaskIndex?: number;   // 当前执行的批处理任务索引
