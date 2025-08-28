@@ -319,27 +319,27 @@ export class ProductionManager {
 
   // 建筑者身体部件配置
   private static getBuilderBody(limits: any): BodyPartConstant[] {
-    // 目标：MOVE:CARRY:WORK 1:2:2比例，适合建造和修理
+    // 目标：MOVE:WORK:CARRY 1:2:2比例，适合建造和修理
     const maxCost = limits.maxCreepCost;
-    const unitCost = 300; // 1个MOVE(50) + 2个CARRY(100) + 2个WORK(200) = 350，优化为300
+    const unitCost = 350; // 1个MOVE(50) + 2个WORK(200) + 2个CARRY(100) = 350
     const maxUnits = Math.floor(maxCost / unitCost);
-    const units = Math.max(1, Math.min(maxUnits, 10)); // 最多10组，支持5RCL的能量上限
+    const units = Math.max(1, Math.min(maxUnits, 8)); // 最多8组，确保在能量上限内
 
+    const moveParts: BodyPartConstant[] = [];
     const workParts: BodyPartConstant[] = [];
     const carryParts: BodyPartConstant[] = [];
-    const moveParts: BodyPartConstant[] = [];
 
-    // 按照MOVE:CARRY:WORK 1:2:2的比例添加部件
+    // 按照1:2:2的比例添加部件
     for (let i = 0; i < units; i++) {
+      moveParts.push(MOVE);
       workParts.push(WORK, WORK);
       carryParts.push(CARRY, CARRY);
-      moveParts.push(MOVE);
     }
 
-    // 按顺序排列：WORK -> CARRY -> MOVE
-    const body = [...workParts, ...carryParts, ...moveParts];
+    // 按顺序排列：MOVE -> WORK -> CARRY
+    const body = [...moveParts, ...workParts, ...carryParts];
 
-    // console.log(`[生产管理] 建筑者配置: ${units}组(2WORK+2CARRY+1MOVE)，总部件: ${workParts.length}W+${carryParts.length}C+${moveParts.length}M，总成本: ${units * unitCost}`);
+    console.log(`[生产管理] 建筑者配置: ${units}组(1MOVE+2WORK+2CARRY)，总部件: ${moveParts.length}M+${workParts.length}W+${carryParts.length}C，总成本: ${units * unitCost}`);
     return body;
   }
 }

@@ -109,6 +109,27 @@ function cleanupCompletedTransportTasks(room: Room): void {
       tasksToDelete.push(task.id);
       console.log(`[房间管理器] 清理transfer任务，改为自主决策: ${task.id}`);
     }
+
+    // **新增：检查长时间无法完成的能量消耗任务（避免死锁）**
+    if ((task.type === 'supplyEnergy' || task.type === 'deliverToSpawn' || task.type === 'deliverToCreep') &&
+        task.status === 'assigned' &&
+        task.assignedAt &&
+        (Game.time - task.assignedAt) > 50) { // 超过50tick未完成
+
+      const carrier = Game.getObjectById(task.assignedTo) as Creep;
+      if (carrier) {
+        // 检查搬运工是否有能量或能否获取能量
+        const hasEnergy = carrier.store.getUsedCapacity(RESOURCE_ENERGY) > 0;
+        const canGetEnergy = checkRoomForEnergySource(room);
+
+        if (!hasEnergy && !canGetEnergy) {
+          console.log(`[房间管理器] 释放无法完成的能量任务(无能量源): ${task.id}，搬运工: ${carrier.name}`);
+          tasksToReset.push(task.id);
+          // 清除搬运工的任务记忆
+          delete carrier.memory.currentTaskId;
+        }
+      }
+    }
   });
 
   // 删除已完成/失效的任务
@@ -373,6 +394,10 @@ function scanStaticUpgradersForTransport(room: Room): void {
                    c.memory.working !== true
   });
 
+  if (staticUpgraders.length > 0) {
+    console.log(`[房间管理器] 扫描到${staticUpgraders.length}个需要搬运的升级者`);
+  }
+
   for (const upgrader of staticUpgraders) {
     // 检查是否已有搬运任务
     const existingTask = Object.values(room.memory.tasks || {}).find((task: any) =>
@@ -381,11 +406,25 @@ function scanStaticUpgradersForTransport(room: Room): void {
     );
 
     if (!existingTask) {
-      // 创建搬运任务
-      const taskId = createUpgraderTransportTask(upgrader);
-      if (taskId) {
-        console.log(`[房间管理器] 为静态升级者 ${upgrader.name} 创建搬运任务: ${taskId}`);
+      // 验证upgrader是否真的不在位置
+      const [targetX, targetY] = upgrader.memory.targetId!.split(',').map(Number);
+      const targetPos = new RoomPosition(targetX, targetY, upgrader.room.name);
+      const isAtTarget = upgrader.pos.isEqualTo(targetPos);
+
+      console.log(`[房间管理器] 升级者${upgrader.name}: 目标(${targetX},${targetY}), 当前(${upgrader.pos.x},${upgrader.pos.y}), 在位置:${isAtTarget}, working:${upgrader.memory.working}`);
+
+      if (!isAtTarget) {
+        // 创建搬运任务
+        const taskId = createUpgraderTransportTask(upgrader);
+        if (taskId) {
+          console.log(`[房间管理器] 为静态升级者 ${upgrader.name} 创建搬运任务: ${taskId}`);
+        }
+      } else {
+        console.log(`[房间管理器] 升级者${upgrader.name}已在目标位置，设置working=true`);
+        upgrader.memory.working = true;
       }
+    } else {
+      console.log(`[房间管理器] 升级者${upgrader.name}已有搬运任务: ${existingTask.id}`);
     }
   }
 }
@@ -704,6 +743,26 @@ function runCreepRole(creep: Creep): void {
   }
 }
 
+// 检查房间是否有能量源
+function checkRoomForEnergySource(room: Room): boolean {
+  // 检查地上的能量
+  const droppedResources = room.find(FIND_DROPPED_RESOURCES, {
+    filter: (resource) => resource.resourceType === RESOURCE_ENERGY
+  });
+  if (droppedResources.length > 0) return true;
+
+  // 检查容器和储存
+  const containers = room.find(FIND_STRUCTURES, {
+    filter: (structure) => {
+      return (structure.structureType === STRUCTURE_CONTAINER ||
+              structure.structureType === STRUCTURE_STORAGE) &&
+             structure.store.getUsedCapacity(RESOURCE_ENERGY) > 0;
+    }
+  });
+
+  return containers.length > 0;
+}
+
 // 初始化房间内存
 export function initializeRoomMemory(room: Room): void {
   if (!Memory.rooms[room.name]) {
@@ -751,7 +810,7 @@ function scanSpawnExtensionEnergyNeeds(room: Room): void {
   if (!roomMemory || !roomMemory.tasks) return;
 
   // 限制任务数量，避免创建过多任务
-  const existingSupplyTasks = Object.values(roomMemory.tasks).filter(
+  let existingSupplyTasks = Object.values(roomMemory.tasks).filter(
     task => task.type === 'supplyEnergy' || task.type === 'deliverToSpawn'
   ).length;
 
@@ -789,38 +848,59 @@ function scanSpawnExtensionEnergyNeeds(room: Room): void {
     }
   }
 
-  // 检查extension能量需求
-  if (existingSupplyTasks < 2) {
+  // 检查extension能量需求 - 智能就近分配
+  if (existingSupplyTasks < 3) { // 允许更多extension任务
     const extensions = room.find(FIND_MY_STRUCTURES, {
       filter: structure => structure.structureType === STRUCTURE_EXTENSION &&
                           structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0
     });
 
     if (extensions.length > 0) {
-      const nearestExtension = room.find(FIND_MY_SPAWNS)[0]?.pos.findClosestByPath(extensions);
+      // 获取能量来源位置（container和storage）
+      const energySources = room.find(FIND_STRUCTURES, {
+        filter: structure => (structure.structureType === STRUCTURE_CONTAINER ||
+                             structure.structureType === STRUCTURE_STORAGE) &&
+                            structure.store.getUsedCapacity(RESOURCE_ENERGY) > 100
+      });
 
-      if (nearestExtension) {
-        const existingTask = Object.values(roomMemory.tasks).find(
-          task => task.type === 'supplyEnergy' && (task as any).targetId === nearestExtension.id
-        );
+      // 如果有能量来源，按照就近原则创建任务
+      if (energySources.length > 0) {
+        // 为每个能量来源找最近的extension
+        for (const energySource of energySources) {
+          const nearestExtensions = energySource.pos.findInRange(extensions, 10)
+            .filter(ext => !Object.values(roomMemory.tasks || {}).some(
+              task => task.type === 'supplyEnergy' && (task as any).targetId === ext.id
+            ))
+            .sort((a, b) => energySource.pos.getRangeTo(a) - energySource.pos.getRangeTo(b));
 
-        if (!existingTask) {
-          const taskId = `supplyEnergy_${nearestExtension.id}_${Game.time}`;
-          roomMemory.tasks[taskId] = {
-            id: taskId,
-            type: 'supplyEnergy',
-            priority: 'high',
-            status: 'pending',
-            roomName: room.name,
-            createdAt: Game.time,
-            expiresAt: Game.time + 100,
-            targetId: nearestExtension.id,
-            targetType: 'extension',
-            position: { x: nearestExtension.pos.x, y: nearestExtension.pos.y },
-            requiredAmount: (nearestExtension as StructureExtension).store.getFreeCapacity(RESOURCE_ENERGY)
-          };
+          // 为最近的1-2个extension创建任务
+          const tasksToCreate = Math.min(nearestExtensions.length, 2, 3 - existingSupplyTasks);
 
-          console.log(`[任务系统] 创建extension能量供应任务: ${taskId}`);
+          for (let i = 0; i < tasksToCreate; i++) {
+            const extension = nearestExtensions[i];
+            const taskId = `supplyEnergy_${extension.id}_${Game.time}`;
+            roomMemory.tasks[taskId] = {
+              id: taskId,
+              type: 'supplyEnergy',
+              priority: 'high',
+              status: 'pending',
+              roomName: room.name,
+              createdAt: Game.time,
+              expiresAt: Game.time + 100,
+              targetId: extension.id,
+              targetType: 'extension',
+              position: { x: extension.pos.x, y: extension.pos.y },
+              requiredAmount: (extension as StructureExtension).store.getFreeCapacity(RESOURCE_ENERGY),
+              nearbyEnergySource: energySource.id // 记录附近的能量源，供搬运工参考
+            };
+
+            console.log(`[任务系统] 创建就近extension能量供应任务: ${taskId} (距离能量源${energySource.pos.getRangeTo(extension)}格)`);
+            existingSupplyTasks++;
+
+            if (existingSupplyTasks >= 3) break;
+          }
+
+          if (existingSupplyTasks >= 3) break;
         }
       }
     }

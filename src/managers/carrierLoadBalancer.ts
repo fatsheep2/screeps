@@ -76,7 +76,7 @@ export class CarrierLoadBalancer {
     return workload;
   }
 
-  // 智能选择最佳搬运工
+  // 智能选择最佳搬运工（增加距离和能量状态考虑）
   public static selectOptimalCarrier(
     availableCarriers: Creep[],
     task: any,
@@ -89,26 +89,43 @@ export class CarrierLoadBalancer {
       return null;
     }
 
-    // 按工作负载排序，选择负载最轻的
-    const sortedCarriers = availableCarriers.sort((a, b) =>
-      this.getCarrierWorkload(a) - this.getCarrierWorkload(b)
-    );
+    // 获取任务位置
+    const taskPos = this.getTaskPosition(task);
+
+    // 按综合评分排序（负载 + 距离 + 能量状态）
+    const scoredCarriers = availableCarriers.map(carrier => {
+      const workload = this.getCarrierWorkload(carrier);
+      const distance = taskPos ? carrier.pos.getRangeTo(taskPos) : 10;
+      const energyFactor = this.getEnergyScoreForTask(carrier, task);
+
+      // 综合评分：负载(30%) + 距离(40%) + 能量适配度(30%)
+      const score = workload * 0.3 + distance * 0.4 + energyFactor * 0.3;
+
+      return { carrier, score, workload, distance, energyFactor };
+    }).sort((a, b) => a.score - b.score);
 
     // 如果允许批处理，优先考虑能批处理的搬运工
     if (allowBatching) {
-      for (const carrier of sortedCarriers) {
-        if (this.canBatchWithCurrentTasks(carrier, task)) {
-          return carrier;
+      for (const entry of scoredCarriers) {
+        if (this.canBatchWithCurrentTasks(entry.carrier, task)) {
+          console.log(`[负载均衡] 选择批处理搬运工 ${entry.carrier.name} (评分:${entry.score.toFixed(1)}, 距离:${entry.distance})`);
+          return entry.carrier;
         }
       }
     }
 
-    // 选择负载最轻的空闲搬运工
-    const idleCarriers = sortedCarriers.filter(c =>
-      !c.memory.currentTaskId && !c.memory.currentTaskBatch
+    // 选择空闲且评分最低的搬运工
+    const idleCarriers = scoredCarriers.filter(entry =>
+      !entry.carrier.memory.currentTaskId && !entry.carrier.memory.currentTaskBatch
     );
 
-    return idleCarriers.length > 0 ? idleCarriers[0] : sortedCarriers[0];
+    const selectedEntry = idleCarriers.length > 0 ? idleCarriers[0] : scoredCarriers[0];
+
+    if (selectedEntry) {
+      console.log(`[负载均衡] 选择搬运工 ${selectedEntry.carrier.name} (评分:${selectedEntry.score.toFixed(1)}, 负载:${selectedEntry.workload}, 距离:${selectedEntry.distance}, 能量:${selectedEntry.energyFactor})`);
+    }
+
+    return selectedEntry?.carrier || null;
   }
 
   // 检查搬运工是否可以与当前任务批处理
@@ -200,5 +217,61 @@ export class CarrierLoadBalancer {
     }
 
     return stats;
+  }
+
+  // 获取任务位置
+  private static getTaskPosition(task: any): RoomPosition | null {
+    try {
+      if (task.position) {
+        return new RoomPosition(task.position.x, task.position.y, task.roomName);
+      }
+
+      // 根据任务类型获取位置
+      if (task.targetId) {
+        const target = Game.getObjectById(task.targetId);
+        if (target && 'pos' in target) {
+          return (target as any).pos;
+        }
+      }
+
+      if (task.spawnId) {
+        const spawn = Game.getObjectById(task.spawnId) as StructureSpawn | null;
+        if (spawn) {
+          return spawn.pos;
+        }
+      }
+
+      return null;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  // 获取搬运工在特定任务上的能量适配度评分
+  private static getEnergyScoreForTask(carrier: Creep, task: any): number {
+    const currentEnergy = carrier.store.getUsedCapacity(RESOURCE_ENERGY);
+    const capacity = carrier.store.getCapacity(RESOURCE_ENERGY);
+
+    // 供给类任务：有能量的搬运工更适合
+    if (task.type === 'supplyEnergy' || task.type === 'deliverToSpawn' || task.type === 'deliverToCreep') {
+      const requiredAmount = task.requiredAmount || 50;
+
+      if (currentEnergy >= requiredAmount) {
+        return 0; // 最佳 - 已有足够能量
+      } else if (currentEnergy > 0) {
+        return 2; // 次佳 - 有部分能量
+      } else {
+        return 5; // 较差 - 需要先取能量
+      }
+    }
+
+    // 收集类任务：空载的搬运工更适合
+    if (task.type === 'collectEnergy') {
+      const freeCapacity = carrier.store.getFreeCapacity(RESOURCE_ENERGY);
+      return (capacity - freeCapacity) / capacity * 3; // 越空越好
+    }
+
+    // 其他任务：中性评分
+    return 2;
   }
 }

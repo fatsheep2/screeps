@@ -142,21 +142,39 @@ export class TaskBatchingManager {
     const tasksWithDistance = deliveryTasks.map(task => ({
       task,
       pos: this.getTaskPosition(task),
-      amount: task.requiredAmount || 50
+      amount: task.requiredAmount || 50,
+      priorityWeight: 0 as number
     })).filter(item => item.pos);
 
     tasksWithDistance.sort((a, b) =>
       startPos.getRangeTo(a.pos!) - startPos.getRangeTo(b.pos!)
     );
 
-    // 贪心算法：按路径顺序选择能完成的任务
+    // 优化的贪心算法：考虑路径效率和优先级
     const batch: any[] = [];
     let remainingEnergy = currentEnergy;
+    let currentPos = startPos;
+
+    // 重新排序，加入优先级考虑
+    tasksWithDistance.forEach(item => {
+      item.priorityWeight = item.task.type === 'deliverToSpawn' ? -10 :
+                           item.task.priority === 'urgent' ? -5 : 0;
+    });
 
     for (const item of tasksWithDistance) {
       if (remainingEnergy >= item.amount) {
+        // 如果已有任务，考虑路径连续性
+        if (batch.length > 0) {
+          const detourCost = currentPos.getRangeTo(item.pos!) -
+                           (item.pos!.getRangeTo(startPos) / (batch.length + 1));
+
+          // 如果绕路成本太高，跳过（除非是高优先级任务）
+          if (detourCost > 8 && item.priorityWeight >= 0) continue;
+        }
+
         batch.push(item.task);
         remainingEnergy -= item.amount;
+        currentPos = item.pos!;
 
         // 最多批处理3个配送任务，避免路径过长
         if (batch.length >= 3) break;

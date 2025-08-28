@@ -160,9 +160,7 @@ export class RoleUpgrader {
       const spawns = room.find(FIND_MY_SPAWNS);
       const spawnPos = spawns.length > 0 ? spawns[0].pos : controllerPos;
 
-                                    // 在7x7范围内寻找合适位置（以控制器为中心）
-
-
+      // 在7x7范围内寻找合适位置（以控制器为中心，-3到3是7格）
       for (let dx = -3; dx <= 3; dx++) {
         for (let dy = -3; dy <= 3; dy++) {
           if (dx === 0 && dy === 0) continue; // 跳过控制器本身位置

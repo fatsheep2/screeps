@@ -156,18 +156,21 @@ export class BuildingLayoutManager {
     return positions;
   }
 
-  // 根据位置确定应该建造什么（棋盘模式）
+  // 根据位置确定应该建造什么（正确的棋盘模式 - 确保每个extension上下左右都有道路）
   private static getPositionPattern(center: RoomPosition, pos: RoomPosition): string {
     const dx = pos.x - center.x;
     const dy = pos.y - center.y;
 
-    // 棋盘模式：(x+y)为偶数的位置放Extension，奇数的位置放Road
-    const sum = Math.abs(dx) + Math.abs(dy);
+    // 标准棋盘模式：确保每个extension的上下左右都有道路通道
+    // 使用曼哈顿距离的奇偶性来决定
+    const manhattanDistance = Math.abs(dx) + Math.abs(dy);
 
-    if (sum % 2 === 0) {
-      return 'EXTENSION';
-    } else {
+    // 棋盘模式：曼哈顿距离为奇数的位置建道路，偶数的位置建extension
+    // 这样能确保每个extension的上、下、左、右四个相邻位置都是道路
+    if (manhattanDistance % 2 === 1) {
       return 'ROAD';
+    } else {
+      return 'EXTENSION';
     }
   }
 

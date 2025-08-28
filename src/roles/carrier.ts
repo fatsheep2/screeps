@@ -3,24 +3,8 @@ import { TaskBatchingManager } from '../managers/taskBatchingManager';
 
 export class RoleCarrier {
   public static run(creep: Creep): void {
-    // 状态切换逻辑
-    if (creep.memory.working && creep.store.getUsedCapacity() === 0) {
-      creep.memory.working = false;
-      creep.say('📦 收集');
-      delete creep.memory.targetId;
-      // 不要删除currentTaskId，让搬运工保持任务分配
-      // 清除徘徊计数器
-      delete creep.memory.stuckCounter;
-    }
-
-    if (!creep.memory.working && creep.store.getFreeCapacity() === 0) {
-      creep.memory.working = true;
-      creep.say('🚚 运输');
-      delete creep.memory.targetId;
-      // 不要删除currentTaskId，让搬运工保持任务分配
-      // 清除徘徊计数器
-      delete creep.memory.stuckCounter;
-    }
+    // 智能任务优先级管理：解决死锁问题
+    const currentEnergy = creep.store.getUsedCapacity(RESOURCE_ENERGY);
 
     // 检查是否卡住
     this.checkIfStuck(creep);
@@ -34,32 +18,71 @@ export class RoleCarrier {
     // 从任务列表查找分配给自己的任务
     const myTask = this.findMyTask(creep);
     if (myTask) {
+      // 最高优先级：搬运任务（不需要能量，避免死锁）
+      if (this.isTransportTask(myTask)) {
+        console.log(`[搬运工${creep.name}] 执行高优先级搬运任务: ${myTask.type}`);
+        this.executeTask(creep, myTask);
+        return;
+      }
+
+      // 中等优先级：能量消耗任务（需要检查能量）
+      if (this.isEnergyConsumingTask(myTask)) {
+        const requiredEnergy = (myTask as any).requiredAmount || 50;
+        if (currentEnergy >= requiredEnergy) {
+          this.executeTask(creep, myTask);
+          return;
+        } else {
+          // 能量不足，检查是否有能量源可以收集
+          const hasEnergySource = this.checkForEnergySource(creep);
+
+          if (hasEnergySource) {
+            // 有能量源，去收集能量
+            console.log(`[搬运工${creep.name}] 任务需要${requiredEnergy}能量，当前只有${currentEnergy}，先去收集`);
+            this.collectResourcesForTask(creep, requiredEnergy - currentEnergy);
+            return;
+          } else {
+            // 没有能量源，检查是否有更紧急的搬运任务
+            const urgentTransportTask = this.findUrgentTransportTask(creep);
+            if (urgentTransportTask) {
+              console.log(`[搬运工${creep.name}] 没有能量源，释放当前任务${myTask.id}，转去执行紧急搬运任务${urgentTransportTask.id}`);
+              this.releaseCurrentTask(creep, myTask);
+              this.assignTask(creep, urgentTransportTask);
+              this.executeTask(creep, urgentTransportTask);
+              return;
+            } else {
+              // 没有紧急搬运任务，尝试收集能量（可能会等待）
+              console.log(`[搬运工${creep.name}] 没有能量源也没有紧急搬运任务，尝试收集能量`);
+              this.collectResourcesForTask(creep, requiredEnergy - currentEnergy);
+              return;
+            }
+          }
+        }
+      }
+
+      // 其他任务类型，直接执行
+      console.log(`[搬运工${creep.name}] 执行其他任务: ${myTask.type}`);
       this.executeTask(creep, myTask);
       return;
     }
 
-    // 没有任务时，尝试获取批处理任务
-    const batchTasks = TaskBatchingManager.createBatchedTask(creep, creep.room);
-    if (batchTasks.length > 1) {
-      TaskBatchingManager.assignBatchToCarrier(creep, batchTasks, creep.room);
-      creep.say('📋 批处理');
-      return;
-    } else if (batchTasks.length === 1) {
-      // 单个任务，正常分配
-      const task = batchTasks[0];
-      const roomMemory = Memory.rooms[creep.room.name];
-      if (roomMemory && roomMemory.tasks) {
-        task.assignedTo = creep.id;
-        task.assignedAt = Game.time;
-        task.status = 'assigned';
-        creep.memory.currentTaskId = task.id;
-        roomMemory.tasks[task.id] = task;
+    // 没有任务时，根据能量状态决定行为
+    if (currentEnergy > 0) {
+      // 有能量时：尝试获取消耗类任务，没有则存储到storage
+      const consumingTasks = TaskBatchingManager.createBatchedTask(creep, creep.room);
+      if (consumingTasks.length > 0) {
+        TaskBatchingManager.assignBatchToCarrier(creep, consumingTasks, creep.room);
+        creep.say('📋 批处理');
+        return;
+      } else {
+        // 没有消耗任务，存储到storage
+        this.storeToStorage(creep);
+        return;
       }
+    } else {
+      // 没有能量时：收集能量
+      this.collectResources(creep);
       return;
     }
-
-    // 没有任务时执行默认行为
-    this.executeDefaultBehavior(creep);
   }
 
   // 检查搬运工是否卡住
@@ -600,13 +623,147 @@ export class RoleCarrier {
 
 
   // 执行默认行为（收集或运输能量）
-  private static executeDefaultBehavior(creep: Creep): void {
-    if (creep.memory.working) {
-      // 运输模式：转移能量
-      this.deliverResources(creep);
+    // 检查是否为搬运任务（最高优先级，不需要能量）
+  private static isTransportTask(task: any): boolean {
+    return task.type === 'assistStaticHarvester' ||
+           task.type === 'assistStaticUpgrader';
+  }
+
+  // 检查是否为能量消耗任务
+  private static isEnergyConsumingTask(task: any): boolean {
+    return task.type === 'supplyEnergy' ||
+           task.type === 'deliverToSpawn' ||
+           task.type === 'deliverToCreep';
+  }
+
+  // 检查是否有能量源可用
+  private static checkForEnergySource(creep: Creep): boolean {
+    // 检查地上的能量
+    const droppedResources = creep.room.find(FIND_DROPPED_RESOURCES, {
+      filter: (resource) => resource.resourceType === RESOURCE_ENERGY
+    });
+    if (droppedResources.length > 0) return true;
+
+    // 检查墓碑
+    const tombstones = creep.room.find(FIND_TOMBSTONES, {
+      filter: (tombstone) => tombstone.store.getUsedCapacity(RESOURCE_ENERGY) > 0
+    });
+    if (tombstones.length > 0) return true;
+
+    // 检查废墟
+    const ruins = creep.room.find(FIND_RUINS, {
+      filter: (ruin) => ruin.store.getUsedCapacity(RESOURCE_ENERGY) > 0
+    });
+    if (ruins.length > 0) return true;
+
+    // 检查容器和储存
+    const containers = creep.room.find(FIND_STRUCTURES, {
+      filter: (structure) => {
+        return (structure.structureType === STRUCTURE_CONTAINER ||
+                structure.structureType === STRUCTURE_STORAGE) &&
+               structure.store.getUsedCapacity(RESOURCE_ENERGY) > 0;
+      }
+    });
+
+    return containers.length > 0;
+  }
+
+  // 寻找紧急的搬运任务
+  private static findUrgentTransportTask(creep: Creep): any | null {
+    const roomMemory = Memory.rooms[creep.room.name];
+    if (!roomMemory || !roomMemory.tasks) return null;
+
+    // 寻找pending状态的搬运任务（优先级：urgent）
+    const urgentTasks = Object.values(roomMemory.tasks).filter((task: any) =>
+      (task.type === 'assistStaticHarvester' || task.type === 'assistStaticUpgrader') &&
+      task.status === 'pending' &&
+      task.priority === 'urgent'
+    );
+
+    return urgentTasks.length > 0 ? urgentTasks[0] : null;
+  }
+
+  // 释放当前任务
+  private static releaseCurrentTask(creep: Creep, task: any): void {
+    const roomMemory = Memory.rooms[creep.room.name];
+    if (roomMemory && roomMemory.tasks && roomMemory.tasks[task.id]) {
+      // 重置任务状态
+      roomMemory.tasks[task.id].status = 'pending';
+      roomMemory.tasks[task.id].assignedTo = null;
+      roomMemory.tasks[task.id].assignedAt = null;
+
+      console.log(`[搬运工${creep.name}] 释放任务: ${task.id}`);
+    }
+
+    // 清除creep的任务记忆
+    delete creep.memory.currentTaskId;
+  }
+
+  // 分配任务给搬运工
+  private static assignTask(creep: Creep, task: any): void {
+    const roomMemory = Memory.rooms[creep.room.name];
+    if (roomMemory && roomMemory.tasks && roomMemory.tasks[task.id]) {
+      // 分配任务
+      roomMemory.tasks[task.id].status = 'assigned';
+      roomMemory.tasks[task.id].assignedTo = creep.id;
+      roomMemory.tasks[task.id].assignedAt = Game.time;
+
+      // 设置creep的任务记忆
+      creep.memory.currentTaskId = task.id;
+
+      console.log(`[搬运工${creep.name}] 分配任务: ${task.id}`);
+    }
+  }
+
+  // 为特定任务收集足够的能量
+  private static collectResourcesForTask(creep: Creep, neededAmount: number): void {
+    creep.say(`💰 需${neededAmount}`);
+    this.getEnergyFromContainer(creep, neededAmount);
+  }
+
+  // 存储到storage
+  private static storeToStorage(creep: Creep): void {
+    const storage = creep.room.storage;
+    if (!storage) {
+      // 没有storage，找container
+      const containers = creep.room.find(FIND_STRUCTURES, {
+        filter: s => s.structureType === STRUCTURE_CONTAINER &&
+                    s.store.getFreeCapacity(RESOURCE_ENERGY) > 0
+      });
+
+      if (containers.length > 0) {
+        const target = creep.pos.findClosestByPath(containers);
+        if (target) {
+          this.transferToTarget(creep, target, '📦 存容器');
+          return;
+        }
+      }
+
+      // 没有存储位置，待机
+      creep.say('⏸️ 待机');
+      return;
+    }
+
+    if (storage.store.getFreeCapacity(RESOURCE_ENERGY) === 0) {
+      creep.say('🏪 仓库满');
+      return;
+    }
+
+    this.transferToTarget(creep, storage, '🏪 存仓库');
+  }
+
+  // 统一的转移逻辑
+  private static transferToTarget(creep: Creep, target: Structure, message: string): void {
+    const transferResult = creep.transfer(target, RESOURCE_ENERGY);
+
+    if (transferResult === ERR_NOT_IN_RANGE) {
+      creep.moveTo(target);
+      creep.say(message);
+    } else if (transferResult === OK) {
+      creep.say('✅ 完成');
+      console.log(`[搬运工${creep.name}] 成功存储${creep.store.getUsedCapacity(RESOURCE_ENERGY)}能量到${target.structureType}`);
     } else {
-      // 收集模式：捡起能量
-      this.collectResources(creep);
+      console.log(`[搬运工${creep.name}] 存储失败: ${transferResult}`);
     }
   }
 
@@ -680,181 +837,30 @@ export class RoleCarrier {
         creep.say('📦');
       }
     } else {
-      // 没有可收集的资源，原地等待
-      creep.say('⏳ 等待');
-    }
-  }
+      // 没有可收集的资源，检查是否有矿工需要搬运
+      console.log(`[搬运工${creep.name}] 没有能量源，检查是否有搬运任务`);
 
-  // 运输资源 - 简化逻辑
-  private static deliverResources(creep: Creep): void {
-    let target: Structure | Creep | null = null;
+      // 在没有能量源的情况下，仍然可以执行搬运任务来启动经济
+      const transportTasks = Object.values(creep.room.memory.tasks || {}).filter((task: any) =>
+        (task.type === 'assistStaticHarvester' || task.type === 'assistStaticUpgrader') &&
+        task.status === 'pending'
+      );
 
-    // 1. 优先运输到 Extension
-    const extensions = creep.room.find(FIND_STRUCTURES, {
-      filter: (structure) => {
-        return structure.structureType === STRUCTURE_EXTENSION &&
-               structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0;
-      }
-    });
-
-    if (extensions.length > 0) {
-      target = creep.pos.findClosestByPath(extensions);
-      creep.say('🏗️ 填充扩展');
-    }
-
-    // 2. 运输到 Spawn
-    if (!target) {
-      const spawns = creep.room.find(FIND_STRUCTURES, {
-        filter: (structure) => {
-          return structure.structureType === STRUCTURE_SPAWN &&
-                 structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0;
-        }
-      });
-
-      if (spawns.length > 0) {
-        target = creep.pos.findClosestByPath(spawns);
-        creep.say('🏰 填充主城');
-      }
-    }
-
-    // 3. 运输到升级者
-    if (!target) {
-      const upgraders = creep.room.find(FIND_MY_CREEPS, {
-        filter: (c) => c.memory.role === 'upgrader' &&
-                       c.store.getFreeCapacity(RESOURCE_ENERGY) > 0
-      });
-
-      if (upgraders.length > 0) {
-        target = creep.pos.findClosestByPath(upgraders);
-        creep.say('⚡ 帮助升级者');
-      }
-    }
-
-    // 4. 运输到容器
-    if (!target) {
-      const containers = creep.room.find(FIND_STRUCTURES, {
-        filter: (structure) => {
-          return (structure.structureType === STRUCTURE_CONTAINER ||
-                  structure.structureType === STRUCTURE_STORAGE) &&
-                 structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0;
-        }
-      });
-
-      if (containers.length > 0) {
-        target = creep.pos.findClosestByPath(containers);
-        creep.say('📦 填充容器');
-      }
-    }
-
-    // 执行运输
-    if (target) {
-      let result: number;
-
-      if (target instanceof Creep) {
-        result = creep.transfer(target, RESOURCE_ENERGY);
+      if (transportTasks.length > 0) {
+        creep.say('🚚 找搬运');
+        console.log(`[搬运工${creep.name}] 发现${transportTasks.length}个待处理搬运任务，等待分配`);
       } else {
-        result = creep.transfer(target, RESOURCE_ENERGY);
+        creep.say('⏳ 无能量源');
+        console.log(`[搬运工${creep.name}] 没有能量源且没有搬运任务，等待中`);
       }
-
-      if (result === ERR_NOT_IN_RANGE) {
-        creep.moveTo(target, {
-          visualizePathStyle: { stroke: '#ffffff' }
-        });
-      } else if (result === OK) {
-        if (target instanceof Creep) {
-          creep.say('⚡');
-        } else {
-          creep.say('🚚');
-        }
-      } else if (result === ERR_FULL) {
-        // 当前目标已满，寻找备用存储目标
-        creep.say('🔄 找备用');
-        this.handleFullStorage(creep);
-      }
-    } else {
-      // 如果没有运输目标，原地等待
-      creep.say('⏳ 等待');
     }
   }
 
-  // 处理存储目标已满的情况
-  private static handleFullStorage(creep: Creep): void {
-    // 寻找备用存储目标，按优先级排序
-    const alternativeTargets = creep.room.find(FIND_STRUCTURES, {
-      filter: (structure) => {
-        return (structure.structureType === STRUCTURE_SPAWN ||
-                structure.structureType === STRUCTURE_EXTENSION ||
-                structure.structureType === STRUCTURE_TOWER ||
-                structure.structureType === STRUCTURE_CONTAINER ||
-                structure.structureType === STRUCTURE_STORAGE) &&
-               structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0;
-      }
-    });
+  // 已删除deliverResources方法 - 现在只通过任务系统管理能量传输，不再主动寻找升级者
 
-    // 按优先级对目标排序：Spawn > Extension > Tower > Container > Storage
-    alternativeTargets.sort((a, b) => {
-      const priorityOrder: { [key: string]: number } = {
-        [STRUCTURE_SPAWN]: 1,
-        [STRUCTURE_EXTENSION]: 2,
-        [STRUCTURE_TOWER]: 3,
-        [STRUCTURE_CONTAINER]: 4,
-        [STRUCTURE_STORAGE]: 5
-      };
-      const priorityA = priorityOrder[a.structureType] || 999;
-      const priorityB = priorityOrder[b.structureType] || 999;
-      return priorityA - priorityB;
-    });
-
-    if (alternativeTargets.length > 0) {
-      // 找到最近的高优先级目标
-      const nearestTarget = creep.pos.findClosestByPath(alternativeTargets);
-      if (nearestTarget) {
-        const transferResult = creep.transfer(nearestTarget, RESOURCE_ENERGY);
-        if (transferResult === OK) {
-          creep.say('💾 转存');
-          console.log(`[搬运工${creep.name}] 转存到备用目标: ${nearestTarget.structureType}`);
-        } else if (transferResult === ERR_NOT_IN_RANGE) {
-          creep.moveTo(nearestTarget, {
-            visualizePathStyle: { stroke: '#00ff00' }
-          });
-          creep.say('🚶 去备用');
-        } else if (transferResult === ERR_FULL) {
-          // 如果备用目标也满了，递归寻找下一个
-          console.log(`[搬运工${creep.name}] 备用目标也满了，寻找下一个`);
-          // 移除已满的目标后重试
-          const nextTargets = alternativeTargets.filter(t => t.id !== nearestTarget.id);
-          if (nextTargets.length > 0) {
-            const nextTarget = creep.pos.findClosestByPath(nextTargets);
-            if (nextTarget && creep.pos.isNearTo(nextTarget)) {
-              const nextResult = creep.transfer(nextTarget, RESOURCE_ENERGY);
-              if (nextResult === OK) {
-                creep.say('💾 次选');
-              }
-            } else if (nextTarget) {
-              creep.moveTo(nextTarget);
-              creep.say('🚶 次选');
-            }
-          }
-        }
-      }
-    } else {
-      // 没有备用存储，暂时等待
-      creep.say('⏳ 无存储');
-      console.log(`[搬运工${creep.name}] 所有存储都满了，等待中`);
-    }
-  }
-
-  // 执行供应能量任务（spawn/extension）
+  // 执行供应能量任务（spawn/extension） - 简化版：假设已检查能量充足
   private static executeSupplyEnergyTask(creep: Creep, task: any): { success: boolean; shouldContinue: boolean; message?: string } {
-    const requiredAmount = task.requiredAmount || 50; // 默认需求50能量
     const currentEnergy = creep.store.getUsedCapacity(RESOURCE_ENERGY);
-
-    // 检查能量是否足够，不够则先去获取
-    if (currentEnergy < requiredAmount) {
-      creep.say(`💰 需${requiredAmount - currentEnergy}`);
-      console.log(`[搬运工${creep.name}] 能量不足(${currentEnergy}/${requiredAmount})，前往获取能量`);
-      return this.getEnergyFromContainer(creep, requiredAmount - currentEnergy);
-    }
 
     // 获取目标建筑
     const target = Game.getObjectById(task.targetId);
@@ -864,20 +870,23 @@ export class RoleCarrier {
     }
 
     // 检查目标是否还需要能量
-    if ((target as any).store?.getFreeCapacity(RESOURCE_ENERGY) === 0) {
+    const targetNeed = (target as any).store?.getFreeCapacity(RESOURCE_ENERGY) || 0;
+    if (targetNeed === 0) {
       console.log(`[搬运工${creep.name}] 供应目标已满: ${task.targetId}`);
       return { success: true, shouldContinue: false, message: '供应目标已满' };
     }
 
-    // 移动到目标并传输能量
-    const transferResult = creep.transfer(target as Structure, RESOURCE_ENERGY);
+    // 直接传输能量（调用此方法前已确保有足够能量）
+    const transferAmount = Math.min(currentEnergy, targetNeed);
+    const transferResult = creep.transfer(target as Structure, RESOURCE_ENERGY, transferAmount);
+
     if (transferResult === ERR_NOT_IN_RANGE) {
       creep.moveTo(target as Structure);
       creep.say('🚚 去供应');
       return { success: true, shouldContinue: true, message: '前往供应目标' };
     } else if (transferResult === OK) {
       creep.say('⚡ 供应');
-      console.log(`[搬运工${creep.name}] 成功供应能量到 ${(target as Structure).structureType}`);
+      console.log(`[搬运工${creep.name}] 成功供应${transferAmount}能量到 ${(target as Structure).structureType}`);
       return { success: true, shouldContinue: false, message: '供应完成' };
     } else {
       console.log(`[搬运工${creep.name}] 供应失败: ${transferResult}`);
@@ -885,17 +894,8 @@ export class RoleCarrier {
     }
   }
 
-  // 执行配送到spawn任务
+  // 执行配送到spawn任务 - 简化版：假设已检查能量充足
   private static executeDeliverToSpawnTask(creep: Creep, task: any): { success: boolean; shouldContinue: boolean; message?: string } {
-    const requiredAmount = task.requiredAmount || 50; // 默认需求50能量
-    const currentEnergy = creep.store.getUsedCapacity(RESOURCE_ENERGY);
-
-    // 检查能量是否足够，不够则先去获取
-    if (currentEnergy < requiredAmount) {
-      creep.say(`💰 需${requiredAmount - currentEnergy}`);
-      console.log(`[搬运工${creep.name}] 能量不足(${currentEnergy}/${requiredAmount})，前往获取能量`);
-      return this.getEnergyFromContainer(creep, requiredAmount - currentEnergy);
-    }
 
     // 获取spawn
     const spawn = Game.getObjectById(task.spawnId);
@@ -905,7 +905,8 @@ export class RoleCarrier {
     }
 
     // 检查spawn是否还需要能量
-    if ((spawn as StructureSpawn).store.getFreeCapacity(RESOURCE_ENERGY) === 0) {
+    const spawnNeed = (spawn as StructureSpawn).store.getFreeCapacity(RESOURCE_ENERGY);
+    if (spawnNeed === 0) {
       console.log(`[搬运工${creep.name}] spawn已满: ${task.spawnId}`);
       return { success: true, shouldContinue: false, message: 'spawn已满' };
     }
@@ -926,17 +927,8 @@ export class RoleCarrier {
     }
   }
 
-  // 执行配送给creep任务
+  // 执行配送给creep任务 - 简化版：假设已检查能量充足
   private static executeDeliverToCreepTask(creep: Creep, task: any): { success: boolean; shouldContinue: boolean; message?: string } {
-    const requiredAmount = task.requiredAmount || 50; // 默认需求50能量
-    const currentEnergy = creep.store.getUsedCapacity(RESOURCE_ENERGY);
-
-    // 检查能量是否足够，不够则先去获取
-    if (currentEnergy < requiredAmount) {
-      creep.say(`💰 需${requiredAmount - currentEnergy}`);
-      console.log(`[搬运工${creep.name}] 能量不足(${currentEnergy}/${requiredAmount})，前往获取能量`);
-      return this.getEnergyFromContainer(creep, requiredAmount - currentEnergy);
-    }
 
     // 获取目标creep
     const targetCreep = Game.getObjectById(task.creepId);
@@ -977,41 +969,62 @@ export class RoleCarrier {
   private static getEnergyFromContainer(creep: Creep, neededAmount: number): { success: boolean; shouldContinue: boolean; message?: string } {
     let target: Structure | null = null;
 
-    // 1. 优先从Container获取能量（避免消耗Storage中的储备）
-    const containers = creep.room.find(FIND_STRUCTURES, {
+    // 1. 首先从满载或接近满载的Container获取（防止overflow）
+    const nearFullContainers = creep.room.find(FIND_STRUCTURES, {
       filter: structure => structure.structureType === STRUCTURE_CONTAINER &&
-                          structure.store.getUsedCapacity(RESOURCE_ENERGY) >= neededAmount
-    });
+                          (structure as StructureContainer).store.getUsedCapacity(RESOURCE_ENERGY) >
+                          (structure as StructureContainer).store.getCapacity() * 0.8
+    }) as StructureContainer[];
 
-    if (containers.length > 0) {
-      target = creep.pos.findClosestByPath(containers);
+    if (nearFullContainers.length > 0) {
+      // 优先选择最满的，再考虑距离
+      const sortedContainers = nearFullContainers.sort((a, b) => {
+        const aFullness = a.store.getUsedCapacity(RESOURCE_ENERGY) / a.store.getCapacity();
+        const bFullness = b.store.getUsedCapacity(RESOURCE_ENERGY) / b.store.getCapacity();
+        return bFullness - aFullness; // 满载程度高的优先
+      });
+      target = creep.pos.findClosestByPath(sortedContainers.slice(0, 3)); // 从前3个最满的中选最近的
       if (target) {
-        creep.say('📦 从容器获取');
+        creep.say('📦 防溢出');
       }
     }
 
-    // 2. 如果Container没有足够能量，再从Storage获取
+    // 2. 其次从有足够能量的Container获取
     if (!target) {
-      const storage = creep.room.storage;
-      if (storage && storage.store.getUsedCapacity(RESOURCE_ENERGY) >= neededAmount) {
-        target = storage;
-        creep.say('🏪 从仓库获取');
+      const containers = creep.room.find(FIND_STRUCTURES, {
+        filter: structure => structure.structureType === STRUCTURE_CONTAINER &&
+                            structure.store.getUsedCapacity(RESOURCE_ENERGY) >= neededAmount
+      });
+
+      if (containers.length > 0) {
+        target = creep.pos.findClosestByPath(containers);
+        if (target) {
+          creep.say('📦 足量容器');
+        }
       }
     }
 
-    // 3. 最后尝试从任何有能量的Container或Storage获取
+    // 3. 再从任何有能量的Container获取（container优先于storage）
     if (!target) {
-      const anyEnergySources = creep.room.find(FIND_STRUCTURES, {
-        filter: structure => (structure.structureType === STRUCTURE_CONTAINER ||
-                             structure.structureType === STRUCTURE_STORAGE) &&
+      const anyContainers = creep.room.find(FIND_STRUCTURES, {
+        filter: structure => structure.structureType === STRUCTURE_CONTAINER &&
                             structure.store.getUsedCapacity(RESOURCE_ENERGY) > 0
       });
 
-      if (anyEnergySources.length > 0) {
-        target = creep.pos.findClosestByPath(anyEnergySources);
+      if (anyContainers.length > 0) {
+        target = creep.pos.findClosestByPath(anyContainers);
         if (target) {
-          creep.say('⚡ 获取能量');
+          creep.say('📦 任意容器');
         }
+      }
+    }
+
+    // 4. 最后才从Storage获取（优先级最低）
+    if (!target) {
+      const storage = creep.room.storage;
+      if (storage && storage.store.getUsedCapacity(RESOURCE_ENERGY) > 0) {
+        target = storage;
+        creep.say('🏪 仓库获取');
       }
     }
 
