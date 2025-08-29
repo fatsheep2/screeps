@@ -19,6 +19,12 @@ export class BuildingLayoutManager {
     // 3. 建设主要道路网络
     const roadsBuilt = this.buildMainRoadNetwork(room);
 
+    // 4. 建设房间内路网（RCL3+）
+    this.buildRoomRoadNetwork(room);
+
+    // 5. 建设边境道路（RCL4+，有侦察兵后）
+    this.buildBorderRoads(room);
+
     // 只有实际建设了东西或定期日志时才输出
     if (containersBuilt > 0 || layoutBuilt > 0 || roadsBuilt > 0 || shouldLog) {
       console.log(`[建筑管理] 房间 ${room.name} 完成建设: 容器${containersBuilt} 布局${layoutBuilt} 道路${roadsBuilt}`);
@@ -85,11 +91,11 @@ export class BuildingLayoutManager {
 
       // 检查是否有手动建筑，有的话也跳过
       const existingStructures = room.lookForAt(LOOK_STRUCTURES, pos);
-      const hasNonTargetStructure = existingStructures.some(s => 
+      const hasNonTargetStructure = existingStructures.some(s =>
         (pattern === 'EXTENSION' && s.structureType !== STRUCTURE_EXTENSION) ||
         (pattern === 'ROAD' && s.structureType !== STRUCTURE_ROAD)
       );
-      
+
       if (hasNonTargetStructure) {
         continue; // 有其他类型建筑，跳过不计入完成度
       }
@@ -98,7 +104,7 @@ export class BuildingLayoutManager {
         // Extension位置：只有在未达到RCL上限时才要求建造
         if (currentExtensions < maxExtensions) {
           requiredPositions++;
-          
+
           const hasTargetStructure = existingStructures.some(s => s.structureType === STRUCTURE_EXTENSION);
           const hasTargetSite = room.lookForAt(LOOK_CONSTRUCTION_SITES, pos).some(s => s.structureType === STRUCTURE_EXTENSION);
 
@@ -109,7 +115,7 @@ export class BuildingLayoutManager {
       } else if (pattern === 'ROAD') {
         // Road位置：总是要求建造
         requiredPositions++;
-        
+
         const hasTargetStructure = existingStructures.some(s => s.structureType === STRUCTURE_ROAD);
         const hasTargetSite = room.lookForAt(LOOK_CONSTRUCTION_SITES, pos).some(s => s.structureType === STRUCTURE_ROAD);
 
@@ -121,7 +127,7 @@ export class BuildingLayoutManager {
 
     // 如果没有需要建设的位置，认为该层完成
     if (requiredPositions === 0) return true;
-    
+
     // 所有需要的位置都已完成才算该层完成
     return completedPositions >= requiredPositions;
   }
@@ -244,14 +250,14 @@ export class BuildingLayoutManager {
     const existingStructures = room.lookForAt(LOOK_STRUCTURES, pos);
     if (existingStructures.length > 0) {
       // 已有建筑，检查是否是我们想要的类型
-      const targetStructureType = pattern === 'EXTENSION' ? STRUCTURE_EXTENSION : 
+      const targetStructureType = pattern === 'EXTENSION' ? STRUCTURE_EXTENSION :
                                   pattern === 'ROAD' ? STRUCTURE_ROAD : null;
-      
+
       const hasTargetStructure = existingStructures.some(s => s.structureType === targetStructureType);
       if (hasTargetStructure) {
         return false; // 已经有想要的建筑，跳过
       }
-      
+
       // 有其他建筑（如手动放置的container），跳过这个位置
       return false;
     }
@@ -260,9 +266,9 @@ export class BuildingLayoutManager {
     const existingSites = room.lookForAt(LOOK_CONSTRUCTION_SITES, pos);
     if (existingSites.length > 0) {
       // 已有建筑工地，检查类型
-      const targetStructureType = pattern === 'EXTENSION' ? STRUCTURE_EXTENSION : 
+      const targetStructureType = pattern === 'EXTENSION' ? STRUCTURE_EXTENSION :
                                   pattern === 'ROAD' ? STRUCTURE_ROAD : null;
-      
+
       const hasTargetSite = existingSites.some(s => s.structureType === targetStructureType);
       return !hasTargetSite; // 如果已有相同类型的工地，跳过；否则可以建设
     }
@@ -451,6 +457,159 @@ export class BuildingLayoutManager {
     if (spawn && spawn.pos.getRangeTo(pos) <= 8) {
       return false; // 棋盘布局会处理这个区域
     }
+
+    return true;
+  }
+
+  // 建设边境道路（RCL4+，有侦察兵后）
+  private static buildBorderRoads(room: Room): void {
+    const rcl = room.controller?.level || 1;
+    if (rcl < 4) {
+      return;
+    }
+
+    // 检查是否有侦察兵
+    const hasScouts = Object.values(Game.creeps).some(c =>
+      c.memory.role === 'scout' && c.memory.homeRoom === room.name
+    );
+    if (!hasScouts) return;
+
+    const spawn = room.find(FIND_MY_SPAWNS)[0];
+    if (!spawn) return;
+
+    // 获取房间内存中的侦察目标
+    const roomMemory = Memory.rooms[room.name];
+    const scoutTargets = roomMemory.scoutTargets || [];
+
+    for (const targetRoomName of scoutTargets) {
+      this.buildRoadToBorder(room, spawn.pos, targetRoomName);
+    }
+  }
+
+  // 建设到边境的道路
+  private static buildRoadToBorder(room: Room, from: RoomPosition, targetRoomName: string): void {
+    // 找到最近的出口
+    const exitDir = room.findExitTo(targetRoomName);
+    if (exitDir === ERR_NO_PATH || exitDir === ERR_INVALID_ARGS) return;
+
+    const exit = from.findClosestByPath(exitDir);
+    if (!exit) return;
+
+    // 使用棋盘布局的模数确保路网兼容
+    const spawn = room.find(FIND_MY_SPAWNS)[0];
+    if (!spawn) return;
+
+    // 计算到出口的路径
+    const path = from.findPathTo(exit, {
+      ignoreCreeps: true,
+      swampCost: 1,
+      plainCost: 1
+    });
+
+    if (path.length === 0) return;
+
+    // 建设道路，使用棋盘布局的模数
+    for (let i = 0; i < Math.min(path.length, 10); i++) {
+      const step = path[i];
+      const pos = new RoomPosition(step.x, step.y, room.name);
+
+      // 检查是否应该在此位置建设道路（使用棋盘布局模数）
+      if (this.shouldBuildBorderRoadAt(room, pos, spawn.pos)) {
+        const result = room.createConstructionSite(pos.x, pos.y, STRUCTURE_ROAD);
+        if (result === OK) {
+          console.log(`[建筑管理] 建设边境道路到${targetRoomName} (${pos.x},${pos.y})`);
+        }
+      }
+    }
+  }
+
+  // 判断是否应该在边境位置建设道路（使用棋盘布局模数）
+  private static shouldBuildBorderRoadAt(room: Room, pos: RoomPosition, spawnPos: RoomPosition): boolean {
+    if (!this.canBuildAt(room, pos)) return false;
+
+    // 使用棋盘布局的模数
+    const pattern = this.getPositionPattern(spawnPos, pos);
+    if (pattern === 'EXTENSION') return false; // 不占用extension位置
+
+    // 检查是否已有道路
+    const existingRoads = room.lookForAt(LOOK_STRUCTURES, pos);
+    if (existingRoads.some(s => s.structureType === STRUCTURE_ROAD)) return false;
+
+    // 检查是否已有工地
+    const existingSites = room.lookForAt(LOOK_CONSTRUCTION_SITES, pos);
+    if (existingSites.some(s => s.structureType === STRUCTURE_ROAD)) return false;
+
+    return true;
+  }
+
+  // 建设房间内路网（RCL3+）
+  private static buildRoomRoadNetwork(room: Room): void {
+    const rcl = room.controller?.level || 1;
+    if (rcl < 3) {
+      return;
+    }
+
+    const spawn = room.find(FIND_MY_SPAWNS)[0];
+    if (!spawn) return;
+
+    // 建设到控制器的路网
+    const controller = room.controller;
+    if (controller && spawn.pos.getRangeTo(controller) > 3) {
+      this.buildRoadNetworkToTarget(room, spawn.pos, controller.pos, 'controller');
+    }
+
+    // 建设到矿点的路网
+    const sources = room.find(FIND_SOURCES);
+    for (const source of sources) {
+      if (spawn.pos.getRangeTo(source) > 3) {
+        this.buildRoadNetworkToTarget(room, spawn.pos, source.pos, 'source');
+      }
+    }
+  }
+
+  // 建设到目标的完整路网
+  private static buildRoadNetworkToTarget(room: Room, from: RoomPosition, to: RoomPosition, targetType: string): void {
+    const spawn = room.find(FIND_MY_SPAWNS)[0];
+    if (!spawn) return;
+
+    const path = from.findPathTo(to, {
+      ignoreCreeps: true,
+      swampCost: 1,
+      plainCost: 1
+    });
+
+    if (path.length === 0) return;
+
+    // 建设完整路网，使用棋盘布局模数
+    for (let i = 0; i < path.length; i++) {
+      const step = path[i];
+      const pos = new RoomPosition(step.x, step.y, room.name);
+
+      // 检查是否应该在此位置建设道路
+      if (this.shouldBuildRoomRoadAt(room, pos, spawn.pos)) {
+        const result = room.createConstructionSite(pos.x, pos.y, STRUCTURE_ROAD);
+        if (result === OK) {
+          console.log(`[建筑管理] 建设${targetType}路网 (${pos.x},${pos.y})`);
+        }
+      }
+      }
+    }
+
+  // 判断是否应该在房间内位置建设道路（使用棋盘布局模数）
+  private static shouldBuildRoomRoadAt(room: Room, pos: RoomPosition, spawnPos: RoomPosition): boolean {
+    if (!this.canBuildAt(room, pos)) return false;
+
+    // 使用棋盘布局的模数
+    const pattern = this.getPositionPattern(spawnPos, pos);
+    if (pattern === 'EXTENSION') return false; // 不占用extension位置
+
+    // 检查是否已有道路
+    const existingRoads = room.lookForAt(LOOK_STRUCTURES, pos);
+    if (existingRoads.some(s => s.structureType === STRUCTURE_ROAD)) return false;
+
+    // 检查是否已有工地
+    const existingSites = room.lookForAt(LOOK_CONSTRUCTION_SITES, pos);
+    if (existingSites.some(s => s.structureType === STRUCTURE_ROAD)) return false;
 
     return true;
   }

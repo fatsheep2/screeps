@@ -152,7 +152,8 @@ function getAdvancedSpawnPriorities(_room: Room, creepCounts: Record<string, num
     // 计算需要的侦察兵数量
     const roomMemory = Memory.rooms[_room.name];
     const remoteMiningTargets = roomMemory.remoteMiningTargets?.length || 0;
-    const neededScouts = Math.min(1 + Math.floor(remoteMiningTargets / 2), 3);
+    // const neededScouts = Math.min(1 + Math.floor(remoteMiningTargets / 2), 3);
+    const neededScouts = Math.min(1 + Math.floor(remoteMiningTargets / 3), 3);
 
     if ((creepCounts.scout || 0) < neededScouts) {
       priorities.push('scout');

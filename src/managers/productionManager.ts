@@ -340,22 +340,10 @@ export class ProductionManager {
   }
 
   // 计算最优侦察兵数量
-  private static calculateOptimalScouts(room: Room, rcl: number, _limits: any): number {
-    // 侦察兵生产条件：RCL4+ 且 energyCapacityAvailable >= 1300
-    if (rcl < 4 || room.energyCapacityAvailable < 1300) {
-      return 0;
-    }
-
-    // 基础配置：每个房间最多1个侦察兵
-    // 如果有外矿目标且需要预定，可能需要额外的侦察兵
-    const roomMemory = Memory.rooms[room.name];
-    const remoteMiningTargets = roomMemory.remoteMiningTargets?.length || 0;
-
-    // 基础1个 + 每2个外矿目标额外1个
-    const baseScouts = 1;
-    const additionalScouts = Math.floor(remoteMiningTargets / 2);
-
-    return Math.min(baseScouts + additionalScouts, 3); // 最多3个侦察兵
+  private static calculateOptimalScouts(room: Room, _rcl: number, _limits: any): number {
+    // 暂时完全停止生产侦察兵
+    console.log(`[生产管理] 房间${room.name}侦察兵: 暂时停止生产，当前已有足够数量`);
+    return 0;
   }
 }
 

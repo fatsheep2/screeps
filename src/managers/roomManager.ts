@@ -54,9 +54,14 @@ export function manageRoom(room: Room): void {
   // 更新任务系统
   updateTaskSystemWithNewManager(room);
 
-  // 管理外矿开发
-  if (Game.time % 50 === 0) {
-    manageRemoteMining(room);
+  // 管理外矿开发 - 暂时注释掉，还没到这一步
+  // if (Game.time % 50 === 0) {
+  //   manageRemoteMining(room);
+  // }
+
+  // 管理侦察任务（每100tick更新一次，避免频繁生成）
+  if (Game.time % 100 === 0) {
+    manageScoutTasks(room);
   }
 
   // 运行每个 Creep 的逻辑
@@ -331,7 +336,7 @@ function scanStaticHarvestersForTransport(room: Room): void {
       // 创建搬运任务
       const taskId = createTransportTask(harvester);
       if (taskId) {
-        console.log(`[房间管理器] 为静态矿工 ${harvester.name} 创建搬运任务: ${taskId}`);
+        // console.log(`[房间管理器] 为静态矿工 ${harvester.name} 创建搬运任务: ${taskId}`);
       }
     }
   }
@@ -385,13 +390,13 @@ function createTransportTask(harvester: Creep): string | null {
 // 扫描静态升级者，创建搬运任务
 function scanStaticUpgradersForTransport(room: Room): void {
   // 首先找出所有upgrader，不管条件
-  const allUpgraders = room.find(FIND_MY_CREEPS, {
-    filter: (c) => c.memory.role === 'upgrader'
-  });
+  // const allUpgraders = room.find(FIND_MY_CREEPS, {
+  //   filter: (c) => c.memory.role === 'upgrader'
+  // });
 
   // 限制日志输出频率 - 每10tick输出一次详细信息
   if (Game.time % 10 === 0) {
-    console.log(`[房间管理器] 房间${room.name}总共有${allUpgraders.length}个升级者`);
+    // console.log(`[房间管理器] 房间${room.name}总共有${allUpgraders.length}个升级者`);
   }
 
   // 现在按原条件筛选需要搬运的升级者
@@ -404,7 +409,7 @@ function scanStaticUpgradersForTransport(room: Room): void {
 
   // 只在有需要搬运的升级者时输出日志
   if (staticUpgraders.length > 0 || Game.time % 20 === 0) {
-    console.log(`[房间管理器] 符合搬运条件的升级者: ${staticUpgraders.length}个`);
+    // console.log(`[房间管理器] 符合搬运条件的升级者: ${staticUpgraders.length}个`);
   }
 
   for (const upgrader of staticUpgraders) {
@@ -748,7 +753,7 @@ function runCreepRole(creep: Creep): void {
         RoleScout.run(creep);
         break;
       default:
-        console.log(`未知的 Creep 角色: ${role}`);
+        console.log(`未知的 Creep 角色: ${role}, 名称: ${creep.name}`);
     }
   } catch (error) {
     console.log(`运行 Creep ${creep.name} 角色 ${role} 时发生错误: ${error}`);
@@ -959,7 +964,7 @@ function scanCreepEnergyRequests(room: Room): void {
         requesterId: creep.id
       };
 
-      console.log(`[任务系统] 创建creep能量配送任务: ${taskId} -> ${creep.name}`);
+      // console.log(`[任务系统] 创建creep能量配送任务: ${taskId} -> ${creep.name}`);/*  */
 
       // 清除请求标记
       delete (creep.memory as any).requestEnergy;
@@ -968,172 +973,286 @@ function scanCreepEnergyRequests(room: Room): void {
   }
 }
 
-// 管理外矿开发
-function manageRemoteMining(room: Room): void {
+// 管理外矿开发 - 暂时注释掉，还没到这一步
+// function manageRemoteMining(room: Room): void {
+//   const roomMemory = Memory.rooms[room.name];
+//   const remoteMiningTargets = roomMemory.remoteMiningTargets || [];
+
+//   if (remoteMiningTargets.length === 0) {
+//     return;
+//   }
+
+//   console.log(`[外矿管理] 房间${room.name}管理${remoteMiningTargets.length}个外矿目标`);
+
+//   for (const targetRoomName of remoteMiningTargets) {
+//     const roomData = roomMemory.scoutedRooms?.[targetRoomName];
+//     if (!roomData || !roomData.sources) {
+//       continue;
+//     }
+
+//     // 为每个外矿房间创建搬运任务和容器建设任务
+//     manageRemoteRoom(room, targetRoomName, roomData);
+//   }
+// }
+
+// 管理侦察任务
+function manageScoutTasks(room: Room): void {
   const roomMemory = Memory.rooms[room.name];
-  const remoteMiningTargets = roomMemory.remoteMiningTargets || [];
+  if (!roomMemory) return;
 
-  if (remoteMiningTargets.length === 0) {
-    return;
+  // 初始化侦察目标列表
+  if (!roomMemory.scoutTargets) {
+    generateScoutTargets(room);
   }
 
-  console.log(`[外矿管理] 房间${room.name}管理${remoteMiningTargets.length}个外矿目标`);
+  // 为每个未侦察的房间生成一个侦察任务
+  const scoutTargets = roomMemory.scoutTargets || [];
 
-  for (const targetRoomName of remoteMiningTargets) {
-    const roomData = roomMemory.scoutedRooms?.[targetRoomName];
-    if (!roomData || !roomData.sources) {
-      continue;
-    }
-
-    // 为每个外矿房间创建搬运任务和容器建设任务
-    manageRemoteRoom(room, targetRoomName, roomData);
-  }
-}
-
-// 管理单个外矿房间
-function manageRemoteRoom(homeRoom: Room, targetRoomName: string, roomData: any): void {
-  const targetRoom = Game.rooms[targetRoomName];
-
-  // 检查是否需要预定房间
-  if (targetRoom && targetRoom.controller && !targetRoom.controller.reservation) {
-    console.log(`[外矿管理] 房间${targetRoomName}需要重新预定`);
-    // 侦察兵会自动处理预定任务
-  }
-
-  // 为每个能源点创建外矿任务
-  for (let i = 0; i < roomData.sources.length; i++) {
-    const source = roomData.sources[i];
-    manageRemoteSource(homeRoom, targetRoomName, source, i);
-  }
-}
-
-// 管理单个外矿能源点
-function manageRemoteSource(homeRoom: Room, targetRoomName: string, sourceData: any, sourceIndex: number): void {
-  const taskId = `remoteMining_${targetRoomName}_${sourceIndex}`;
-  const roomMemory = Memory.rooms[homeRoom.name];
-
+  // 确保tasks对象存在
   if (!roomMemory.tasks) {
     roomMemory.tasks = {};
   }
 
-  // 检查是否已存在该外矿任务
-  if (roomMemory.tasks[taskId]) {
-    return;
+  for (const targetRoom of scoutTargets) {
+    // 检查是否已有针对这个房间的侦察任务
+    const existingScoutTask = Object.values(roomMemory.tasks).find((task: any) =>
+      task.type === 'scoutRoom' && task.targetRoom === targetRoom
+    );
+
+    if (!existingScoutTask) {
+      // 检查房间是否已经侦察完成
+      const roomData = roomMemory.scoutedRooms?.[targetRoom];
+      const needsScouting = !roomData ||
+                           !roomData.sources ||
+                           !roomData.controller ||
+                           !roomData.terrain ||
+                           !roomData.mineral;
+
+      if (needsScouting) {
+        // 创建侦察任务（没有时间戳，每个房间只有一个任务）
+        const taskId = `scout_${targetRoom}`;
+        const scoutTask = {
+          id: taskId,
+          type: 'scoutRoom',
+          targetRoom: targetRoom,
+          homeRoom: room.name,
+          priority: 'normal',
+          status: 'pending',
+          createdAt: Game.time,
+          assignedTo: null,
+          assignedAt: null
+        };
+
+        // roomMemory.tasks已经在前面确保存在了
+        roomMemory.tasks[taskId] = scoutTask;
+        console.log(`[房间管理器] 创建侦察任务: ${taskId} - ${targetRoom}`);
+      }
+    }
   }
 
-  // 创建外矿搬运任务
-  const transportTask = {
-    id: taskId,
-    type: 'assistRemoteHarvester',
-    targetRoom: targetRoomName,
-    sourceIndex: sourceIndex,
-    sourceId: sourceData.id,
-    sourcePos: sourceData.pos,
-    homeRoom: homeRoom.name,
-    priority: 'normal',
-    status: 'pending',
-    createdAt: Game.time,
-    requiredAmount: 0, // 外矿任务不需要能量
-    assignedTo: null,
-    assignedAt: null
-  };
-
-  roomMemory.tasks[taskId] = transportTask;
-  console.log(`[外矿管理] 创建外矿任务: ${taskId} - ${targetRoomName}矿点${sourceIndex}`);
-
-  // 检查是否需要建设容器
-  checkRemoteContainerNeeds(homeRoom, targetRoomName, sourceData, sourceIndex);
+  // 清理已完成的侦察任务
+  // roomMemory.tasks已经在前面确保存在了
+  Object.values(roomMemory.tasks!).forEach((task: any) => {
+    if (task.type === 'scoutRoom' && task.status === 'completed') {
+      delete roomMemory.tasks![task.id];
+      console.log(`[房间管理器] 清理已完成的侦察任务: ${task.id}`);
+    }
+  });
 }
 
-// 检查外矿容器建设需求
-function checkRemoteContainerNeeds(homeRoom: Room, targetRoomName: string, sourceData: any, sourceIndex: number): void {
-  const targetRoom = Game.rooms[targetRoomName];
-  if (!targetRoom) {
-    console.log(`[外矿管理] 暂无房间${targetRoomName}视野，跳过容器检查`);
-    return;
+// 生成侦察目标（只检查直接相邻且有直接出入口的房间）
+function generateScoutTargets(room: Room): void {
+  const roomMemory = Memory.rooms[room.name];
+  if (!roomMemory) return;
+
+  // 初始化侦察目标列表
+  if (!roomMemory.scoutTargets) {
+    roomMemory.scoutTargets = [];
   }
 
-  const sourcePos = new RoomPosition(sourceData.pos.x, sourceData.pos.y, targetRoomName);
+  // 清空现有目标，重新生成
+  roomMemory.scoutTargets = [];
 
-  // 检查矿点周围是否已有容器
-  const nearbyContainers = sourcePos.findInRange(FIND_STRUCTURES, 2, {
-    filter: (structure) => structure.structureType === STRUCTURE_CONTAINER
-  });
+  // 解析房间坐标
+  const match = room.name.match(/^([WE])(\d+)([NS])(\d+)$/);
+  if (!match) return;
 
-  if (nearbyContainers.length > 0) {
-    console.log(`[外矿管理] 房间${targetRoomName}矿点${sourceIndex}附近已有容器`);
-    return;
-  }
+  const [, ewDir, ewNum, nsDir, nsNum] = match;
+  const x = ewDir === 'W' ? -parseInt(ewNum) : parseInt(ewNum);
+  const y = nsDir === 'N' ? -parseInt(nsNum) : parseInt(nsNum);
 
-  // 检查是否已有容器建设工地
-  const nearbyConstructionSites = sourcePos.findInRange(FIND_CONSTRUCTION_SITES, 2, {
-    filter: (site) => site.structureType === STRUCTURE_CONTAINER
-  });
+  // 生成四个方向的相邻房间
+  const directions = [
+    { dx: 1, dy: 0 },   // 东
+    { dx: -1, dy: 0 },  // 西
+    { dx: 0, dy: 1 },   // 南
+    { dx: 0, dy: -1 }   // 北
+  ];
 
-  if (nearbyConstructionSites.length > 0) {
-    console.log(`[外矿管理] 房间${targetRoomName}矿点${sourceIndex}附近已有容器工地`);
-    return;
-  }
+  for (const dir of directions) {
+    const newX = x + dir.dx;
+    const newY = y + dir.dy;
 
-  // 寻找最佳容器位置（距离源房间最近的位置）
-  const bestContainerPos = findBestContainerPosition(homeRoom, sourcePos);
-  if (bestContainerPos) {
-    const result = bestContainerPos.createConstructionSite(STRUCTURE_CONTAINER);
-    if (result === OK) {
-      console.log(`[外矿管理] 在房间${targetRoomName}(${bestContainerPos.x},${bestContainerPos.y})创建容器工地`);
+    const newEwDir = newX < 0 ? 'W' : 'E';
+    const newNsDir = newY < 0 ? 'N' : 'S';
+    const roomName = `${newEwDir}${Math.abs(newX)}${newNsDir}${Math.abs(newY)}`;
+
+    // 检查是否有直接出入口（避免需要绕路的房间）
+    const exitDir = room.findExitTo(roomName);
+    if (exitDir !== ERR_NO_PATH && exitDir !== ERR_INVALID_ARGS) {
+      roomMemory.scoutTargets.push(roomName);
+      console.log(`[房间管理器] 房间${roomName}与${room.name}有直接出入口，添加到侦察目标`);
     } else {
-      console.log(`[外矿管理] 创建容器工地失败: ${result}`);
-    }
-  }
-}
-
-// 寻找最佳容器位置
-function findBestContainerPosition(homeRoom: Room, sourcePos: RoomPosition): RoomPosition | null {
-  const homePos = homeRoom.controller?.pos || homeRoom.find(FIND_MY_SPAWNS)[0]?.pos;
-  if (!homePos) {
-    return null;
-  }
-
-  const terrain = Game.map.getRoomTerrain(sourcePos.roomName);
-  let bestPos: RoomPosition | null = null;
-  let bestDistance = Infinity;
-
-  // 检查矿点周围2格范围内的位置
-  for (let dx = -2; dx <= 2; dx++) {
-    for (let dy = -2; dy <= 2; dy++) {
-      if (dx === 0 && dy === 0) continue; // 跳过矿点本身
-
-      const x = sourcePos.x + dx;
-      const y = sourcePos.y + dy;
-
-      if (x < 1 || x > 48 || y < 1 || y > 48) continue; // 边界检查
-
-      const pos = new RoomPosition(x, y, sourcePos.roomName);
-
-      // 检查地形是否可建设
-      if (terrain.get(x, y) & TERRAIN_MASK_WALL) continue;
-
-      // 检查是否已有建筑或工地
-      const structures = pos.look();
-      let hasObstacle = false;
-      for (const item of structures) {
-        if (item.type === LOOK_STRUCTURES || item.type === LOOK_CONSTRUCTION_SITES) {
-          hasObstacle = true;
-          break;
-        }
-      }
-      if (hasObstacle) continue;
-
-      // 计算到源房间的线性距离
-      const distance = Game.map.getRoomLinearDistance(homeRoom.name, sourcePos.roomName) * 50 +
-                      Math.abs(pos.x - 25) + Math.abs(pos.y - 25);
-
-      if (distance < bestDistance) {
-        bestDistance = distance;
-        bestPos = pos;
-      }
+      console.log(`[房间管理器] 房间${roomName}与${room.name}无直接出入口，跳过`);
     }
   }
 
-  return bestPos;
+  console.log(`[房间管理器] 为房间${room.name}生成直接相邻侦察目标: ${roomMemory.scoutTargets.join(', ')}`);
 }
+
+// 管理单个外矿房间 - 暂时注释掉，还没到这一步
+// function manageRemoteRoom(homeRoom: Room, targetRoomName: string, roomData: any): void {
+//   const targetRoom = Game.rooms[targetRoomName];
+
+//   // 检查是否需要预定房间
+//   if (targetRoom && targetRoom.controller && !targetRoom.controller.reservation) {
+//     console.log(`[外矿管理] 房间${targetRoomName}需要重新预定`);
+//     // 侦察兵会自动处理预定任务
+//   }
+
+//   // 为每个能源点创建外矿任务
+//   for (let i = 0; i < roomData.sources.length; i++) {
+//     const source = roomData.sources[i];
+//     manageRemoteSource(homeRoom, targetRoomName, source, i);
+//   }
+// }
+
+// 管理单个外矿能源点 - 暂时注释掉，还没到这一步
+// function manageRemoteSource(homeRoom: Room, targetRoomName: string, sourceData: any, sourceIndex: number): void {
+//   const taskId = `remoteMining_${targetRoomName}_${sourceIndex}`;
+//   const roomMemory = Memory.rooms[homeRoom.name];
+
+//   if (!roomMemory.tasks) {
+//     roomMemory.tasks = {};
+//   }
+
+//   // 检查是否已存在该外矿任务
+//   if (roomMemory.tasks[taskId]) {
+//     return;
+//   }
+
+//   // 创建外矿搬运任务
+//   const transportTask = {
+//     id: taskId,
+//     type: 'assistRemoteHarvester',
+//     targetRoom: targetRoomName,
+//     sourceIndex: sourceIndex,
+//     sourceId: sourceData.id,
+//     sourcePos: sourceData.pos,
+//     homeRoom: homeRoom.name,
+//     priority: 'normal',
+//     status: 'pending',
+//     createdAt: Game.time,
+//     requiredAmount: 0, // 外矿任务不需要能量
+//     assignedTo: null,
+//     assignedAt: null
+//   };
+
+//   roomMemory.tasks[taskId] = transportTask;
+//   console.log(`[外矿管理] 创建外矿任务: ${taskId} - ${targetRoomName}矿点${sourceIndex}`);
+
+//   // 检查是否需要建设容器
+//   checkRemoteContainerNeeds(homeRoom, targetRoomName, sourceData, sourceIndex);
+// }
+
+  // 检查外矿容器建设需求 - 暂时注释掉，还没到这一步
+  // function checkRemoteContainerNeeds(homeRoom: Room, targetRoomName: string, sourceData: any, sourceIndex: number): void {
+  //   const targetRoom = Game.rooms[targetRoomName];
+  //   if (!targetRoom) {
+  //     console.log(`[外矿管理] 暂无房间${targetRoomName}视野，跳过容器检查`);
+  //     return;
+  //   }
+
+  //   const sourcePos = new RoomPosition(sourceData.pos.x, sourceData.pos.y, targetRoomName);
+
+  //   // 检查矿点周围是否已有容器
+  //   const nearbyContainers = sourcePos.findInRange(FIND_STRUCTURES, 1, {
+  //     filter: (structure) => structure.structureType === STRUCTURE_CONTAINER
+  //   });
+
+  //   if (nearbyContainers.length > 0) {
+  //     console.log(`[外矿管理] 房间${targetRoomName}矿点${sourceIndex}附近已有容器`);
+  //     return;
+  //   }
+
+  //   // 检查是否已有容器建设工地
+  //   const nearbyConstructionSites = sourcePos.findInRange(FIND_CONSTRUCTION_SITES, 1, {
+  //     filter: (site) => site.structureType === STRUCTURE_CONTAINER
+  //   });
+
+  //   if (nearbyConstructionSites.length > 0) {
+  //     console.log(`[外矿管理] 房间${targetRoomName}矿点${sourceIndex}附近已有容器工地`);
+  //     return;
+  //   }
+
+  //   // 寻找最佳容器位置（距离源房间最近的位置）
+  //   const bestContainerPos = findBestContainerPosition(homeRoom, sourcePos);
+  //   if (bestContainerPos) {
+  //     const result = bestContainerPos.createConstructionSite(STRUCTURE_CONTAINER);
+  //     if (result === OK) {
+  //       console.log(`[外矿管理] 在房间${targetRoomName}(${bestContainerPos.x},${bestContainerPos.y})创建容器工地`);
+  //     } else {
+  //       console.log(`[外矿管理] 创建容器工地失败: ${result}`);
+  //     }
+  //   }
+  // }
+
+  // 寻找最佳容器位置 - 暂时注释掉，还没到这一步
+  // function findBestContainerPosition(homeRoom: Room, sourcePos: RoomPosition): RoomPosition | null {
+  //   const homePos = homeRoom.controller?.pos || homeRoom.find(FIND_MY_SPAWNS)[0]?.pos;
+  //   if (!homePos) {
+  //     return null;
+  //   }
+
+  //   const terrain = Game.map.getRoomTerrain(sourcePos.roomName);
+  //   let bestPos: RoomPosition | null = null;
+  //   let bestDistance = Infinity;
+
+  //   // 检查矿点周围1格范围内的位置（避免重复建设）
+  //   for (let dx = -1; dx <= 1; dx++) {
+  //     for (let dy = -1; dy <= 1; dy++) {
+  //       if (dx === 0 && dy === 0) continue; // 跳过矿点本身
+
+  //       const x = sourcePos.x + dx;
+  //       const y = sourcePos.y + dy;
+
+  //       if (x < 1 || x > 48 || y < 1 || y > 48) continue; // 边界检查
+
+  //       const pos = new RoomPosition(x, y, sourcePos.roomName);
+
+  //       // 检查地形是否可建设
+  //       if (terrain.get(x, y) & TERRAIN_MASK_WALL) continue;
+
+  //       // 检查是否已有建筑或工地
+  //   const structures = pos.look();
+  //   let hasObstacle = false;
+  //   for (const item of structures) {
+  //     if (item.type === LOOK_STRUCTURES || item.type === LOOK_CONSTRUCTION_SITES) {
+  //       hasObstacle = true;
+  //       break;
+  //     }
+  //   }
+  //   if (hasObstacle) continue;
+
+  //   // 计算到源房间的线性距离
+  //   const distance = Game.map.getRoomLinearDistance(homeRoom.name, sourcePos.roomName) * 50 +
+  //                   Math.abs(pos.x - 25) + Math.abs(pos.y - 25);
+
+  //   if (distance < bestDistance) {
+  //     bestDistance = distance;
+  //     bestPos = pos;
+  //   }
+  // }
+
+  //   return bestPos;
+  // }
