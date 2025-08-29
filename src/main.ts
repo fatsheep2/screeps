@@ -1,11 +1,14 @@
 import { ErrorMapper } from "utils/ErrorMapper";
-import { initializeRoomMemory, cleanupDeadCreeps, updateRoomStatus, manageRoom } from "./managers/roomManager";
+import { manageRoom } from "./managers/roomManager";
 
 // 导入简化的控制台命令
 import * as ConsoleCommands from "./utils/consoleCommands";
 
 // 导入搬运工诊断工具
 import { CarrierDiagnostics } from "./utils/carrierDiagnostics";
+
+// 导入任务系统调试工具
+import { TaskDebug } from "./utils/taskDebug";
 
 // 导入战斗相关角色（用于跨房间处理）
 import { RoleTank } from "./roles/tank";
@@ -30,6 +33,13 @@ declare global {
   var diagnoseCarriers: typeof CarrierDiagnostics.fullDiagnosis;
   var analyzeCarrier: typeof CarrierDiagnostics.analyzeCarrierDetailed;
   var forceAssignTasks: typeof CarrierDiagnostics.forceTaskReassignment;
+  
+  // 任务系统调试命令
+  var showTasks: typeof TaskDebug.showAllTasks;
+  var clearTasks: typeof TaskDebug.clearAllTasks;
+  var testComplete: typeof TaskDebug.testTaskCompletion;
+  var checkExtensions: typeof TaskDebug.checkExtensions;
+  var diagnoseCarrierTasks: typeof TaskDebug.diagnoseCrackCarriers;
 }
 
 // 暴露简化的控制台命令到全局
@@ -47,6 +57,42 @@ global.checkRoomConnection = ConsoleCommands.checkRoomConnection;
 global.diagnoseCarriers = CarrierDiagnostics.fullDiagnosis;
 global.analyzeCarrier = CarrierDiagnostics.analyzeCarrierDetailed;
 global.forceAssignTasks = CarrierDiagnostics.forceTaskReassignment;
+
+// 暴露任务系统调试命令
+global.showTasks = TaskDebug.showAllTasks;
+global.clearTasks = TaskDebug.clearAllTasks;
+global.testComplete = TaskDebug.testTaskCompletion;
+global.checkExtensions = TaskDebug.checkExtensions;
+global.diagnoseCarrierTasks = TaskDebug.diagnoseCrackCarriers;
+
+// 简化的内联函数实现
+function cleanupDeadCreeps(): void {
+  for (const name in Memory.creeps) {
+    if (!(name in Game.creeps)) {
+      delete Memory.creeps[name];
+    }
+  }
+}
+
+function initializeRoomMemory(room: Room): void {
+  if (!Memory.rooms[room.name]) {
+    Memory.rooms[room.name] = {
+      staticHarvesters: 0,
+      upgraders: 0,
+      builders: 0,
+      carriers: 0,
+      miningSpots: [],
+      totalAvailableSpots: 0,
+      tasks: {}
+    };
+  }
+}
+
+function updateRoomStatus(room: Room): void {
+  // 简化的房间状态更新，大部分逻辑已转移到各个管理器中
+  const roomMemory = Memory.rooms[room.name];
+  if (!roomMemory) return;
+}
 
 export const loop = ErrorMapper.wrapLoop(() => {
   // 初始化全局内存

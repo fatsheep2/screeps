@@ -63,8 +63,8 @@ export class RoleUpgrader {
 
       // 查找是否已有搬运任务
       const existingTask = Object.values(roomMemory.tasks).find((task: any) =>
-        task.type === 'assistStaticUpgrader' &&
-        task.upgraderId === creep.id
+        task.type === 'assist_upgrader' &&
+        task.targetId === creep.id
       );
 
       if (!existingTask) {
@@ -74,13 +74,11 @@ export class RoleUpgrader {
       }
 
       // 已有任务，显示状态并配合搬运工
-      const statusText = existingTask.status === 'pending' ? '⏳ 等待分配' :
-                        existingTask.status === 'assigned' ? '🚛 搬运中' :
-                        existingTask.status === 'in_progress' ? '🚛 搬运中' : '❓ 未知状态';
+      const statusText = existingTask.assignedTo ? '🚛 搬运中' : '⏳ 等待分配';
       creep.say(statusText);
 
       // 如果任务已分配，检查搬运工是否在身边
-      if (existingTask.assignedTo && (existingTask.status === 'assigned' || existingTask.status === 'in_progress')) {
+      if (existingTask.assignedTo) {
         const assignedCarrier = Game.getObjectById(existingTask.assignedTo) as Creep;
         if (assignedCarrier && creep.pos.isNearTo(assignedCarrier.pos)) {
           // 搬运工在身边，升级者配合pull操作

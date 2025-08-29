@@ -2,6 +2,7 @@ import { ROLE_LIMITS, BASE_BODY_PARTS, BODY_EXTENSIONS } from '../config/creepCo
 import { getBodyCost } from '../utils/creepUtils';
 import { getRecommendedBodyParts, getRecommendedBodyPartsWithEnergy } from './productionManager';
 import { RoleUpgrader } from '../roles/upgrader';
+import { ScoutManager } from './scoutManager';
 
 // 尝试生产新 Creep
 export function spawnCreeps(room: Room, creepCounts: Record<string, number>, hasBasic: boolean): void {
@@ -40,17 +41,11 @@ export function spawnCreeps(room: Room, creepCounts: Record<string, number>, has
   }
 
   for (const role of priorities) {
-    // 侦察兵特殊处理：不使用ROLE_LIMITS，而是使用动态计算的需求
+    // 侦察兵特殊处理：使用智能侦察管理系统
     let shouldProduce = false;
     if (role === 'scout') {
-      // 侦察兵生产条件：RCL4+ 且 energyCapacityAvailable >= 1300
-      const rcl = room.controller?.level || 1;
-      if (rcl >= 4 && room.energyCapacityAvailable >= 1300) {
-        const roomMemory = Memory.rooms[room.name];
-        const remoteMiningTargets = roomMemory.remoteMiningTargets?.length || 0;
-        const neededScouts = Math.min(1 + Math.floor(remoteMiningTargets / 2), 3);
-        shouldProduce = (creepCounts.scout || 0) < neededScouts;
-      }
+      // 使用新的智能侦察逻辑
+      shouldProduce = ScoutManager.shouldProduceScout(room);
     } else {
       // 其他角色使用动态限制
       shouldProduce = creepCounts[role] < dynamicRoleLimits[role as keyof typeof dynamicRoleLimits];
