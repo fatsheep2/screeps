@@ -387,6 +387,23 @@ function createTransportTask(harvester: Creep): string | null {
 
 // 扫描静态升级者，创建搬运任务
 function scanStaticUpgradersForTransport(room: Room): void {
+  // 首先找出所有upgrader，不管条件
+  const allUpgraders = room.find(FIND_MY_CREEPS, {
+    filter: (c) => c.memory.role === 'upgrader'
+  });
+
+  console.log(`[房间管理器] 房间${room.name}总共有${allUpgraders.length}个升级者`);
+
+  // 逐个检查每个upgrader的状态
+  for (const upgrader of allUpgraders) {
+    const hasTargetId = !!upgrader.memory.targetId;
+    const moveParts = upgrader.getActiveBodyparts(MOVE);
+    const isWorking = upgrader.memory.working;
+
+    console.log(`[房间管理器] 升级者${upgrader.name}: targetId=${hasTargetId ? upgrader.memory.targetId : 'NO'}, MOVE部件=${moveParts}, working=${isWorking}, 位置=(${upgrader.pos.x},${upgrader.pos.y})`);
+  }
+
+  // 现在按原条件筛选
   const staticUpgraders = room.find(FIND_MY_CREEPS, {
     filter: (c) => c.memory.role === 'upgrader' &&
                    c.memory.targetId &&
@@ -394,9 +411,7 @@ function scanStaticUpgradersForTransport(room: Room): void {
                    c.memory.working !== true
   });
 
-  if (staticUpgraders.length > 0) {
-    console.log(`[房间管理器] 扫描到${staticUpgraders.length}个需要搬运的升级者`);
-  }
+  console.log(`[房间管理器] 符合搬运条件的升级者: ${staticUpgraders.length}个`);
 
   for (const upgrader of staticUpgraders) {
     // 检查是否已有搬运任务
