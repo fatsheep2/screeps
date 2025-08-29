@@ -4,9 +4,14 @@ import { initializeRoomMemory, cleanupDeadCreeps, updateRoomStatus, manageRoom }
 // 导入简化的控制台命令
 import * as ConsoleCommands from "./utils/consoleCommands";
 
-
 // 导入搬运工诊断工具
 import { CarrierDiagnostics } from "./utils/carrierDiagnostics";
+
+// 导入战斗相关角色（用于跨房间处理）
+import { RoleTank } from "./roles/tank";
+import { RoleWarrior } from "./roles/warrior";
+import { RoleArcher } from "./roles/archer";
+import { RoleHealer } from "./roles/healer";
 
 // 将简化的控制台命令暴露到全局作用域
 declare global {
@@ -86,6 +91,38 @@ export const loop = ErrorMapper.wrapLoop(() => {
 
     // 管理房间
     manageRoom(room);
+  }
+
+  // 全局creep处理：确保所有creep无论在哪个房间都能运行
+  // 这样解决tank跨房间移动时逻辑不运行的问题
+  for (const creepName in Game.creeps) {
+    const creep = Game.creeps[creepName];
+    // 检查creep是否在己方房间中已被处理过
+    const isInMyRoom = creep.room.controller?.my;
+
+    if (!isInMyRoom) {
+      // creep在非己方房间，需要单独处理战斗角色
+      try {
+        const role = (creep.memory as any).role;
+        switch (role) {
+          case 'tank':
+            RoleTank.run(creep);
+            break;
+          case 'warrior':
+            RoleWarrior.run(creep);
+            break;
+          case 'archer':
+            RoleArcher.run(creep);
+            break;
+          case 'healer':
+            RoleHealer.run(creep);
+            break;
+          // 其他角色通常不需要跨房间，暂不处理
+        }
+      } catch (error) {
+        console.log(`全局处理 Creep ${creep.name} 角色 ${(creep.memory as any).role} 时发生错误: ${error}`);
+      }
+    }
   }
 
   // 如果没有我的房间，显示提示

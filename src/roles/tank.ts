@@ -55,47 +55,18 @@ export class RoleTank {
     }
   }
 
-  // 简化的跨房间移动逻辑（修复moveTo缓存问题）
+  // 简化的跨房间移动逻辑
   private static moveToTargetRoom(creep: Creep, targetRoom: string): void {
-    console.log("targetRoom", targetRoom);
-    console.log("creep.room.name", creep.room.name);
-    
-    if (creep.room.name !== targetRoom) {
-      console.log(`[Tank${creep.name}] 没有房间 ${targetRoom} 的视野，移动到房间中心`);
-      
-      // 清除可能存在的move缓存，避免跨房间移动卡住
-      delete (creep.memory as any)._move;
-      
-      // 使用更可靠的跨房间移动方法
-      const targetPos = new RoomPosition(25, 25, targetRoom);
-      const moveResult = creep.moveTo(targetPos, {
+    if( creep.room.name !== targetRoom)
+      creep.moveTo(new RoomPosition(25,25,targetRoom),{
+        reusePath: 10,
+        range: 10,
         visualizePathStyle: { stroke: '#ff0000' },
-        reusePath: 1, // 减少path缓存时间
-        maxRooms: 3   // 限制最大房间数
       });
-      
-      if (moveResult !== OK) {
-        console.log(`[Tank${creep.name}] moveTo失败: ${moveResult}，尝试寻找出口`);
-        // 如果moveTo失败，手动寻找出口
-        const exit = creep.room.findExitTo(targetRoom);
-        if (exit && exit !== ERR_NO_PATH && exit !== ERR_INVALID_ARGS) {
-          const exitPositions = creep.room.find(exit as FindConstant);
-          const exitPos = creep.pos.findClosestByRange(exitPositions);
-          if (exitPos) {
-            creep.moveTo(exitPos);
-            creep.say('🚪 找出口');
-          }
-        }
-      } else {
-        creep.say('🚀 跨房间');
-      }
-    } else {
+    else{
       // 有视野 = 已经进入房间
       console.log(`[Tank${creep.name}] 🎉 成功进入目标房间 ${targetRoom}`);
       creep.say('✅ 已到达');
-      
-      // 清理攻击目标，避免重复移动
-      delete creep.memory.attackTarget;
     }
   }
 
