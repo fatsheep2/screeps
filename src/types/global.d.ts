@@ -13,10 +13,14 @@ declare global {
     upgraders: number;
     builders: number;
     carriers: number;
+    scouts?: number;
     miningSpots: string[]; // 记录可用的采矿点
     totalAvailableSpots: number; // 记录总可用空地数量
     tasks?: { [taskId: string]: any }; // 任务系统
     upgraderPositions?: string[]; // 缓存的升级者位置数组
+    scoutTargets?: string[]; // 侦察目标房间列表
+    scoutedRooms?: { [roomName: string]: any }; // 已侦察房间的信息
+    remoteMiningTargets?: string[]; // 适合外矿的房间列表
   }
 
   interface CreepMemory {
@@ -51,6 +55,10 @@ declare global {
     // 任务批处理相关
     currentTaskBatch?: string[]; // 当前执行的批处理任务ID列表
     currentTaskIndex?: number;   // 当前执行的批处理任务索引
+    // 侦察兵相关
+    targetRoom?: string;        // 目标房间
+    taskType?: string;          // 任务类型：scout、reserve
+    homeRoom?: string;          // 出生房间
   }
 
   // 战斗小组内存结构

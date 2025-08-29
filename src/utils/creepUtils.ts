@@ -34,7 +34,8 @@ export function countRoomCreeps(room: Room): Record<string, number> {
     staticHarvester: 0,
     upgrader: 0,
     builder: 0,
-    carrier: 0
+    carrier: 0,
+    scout: 0
   };
 
   const roomCreeps = room.find(FIND_MY_CREEPS);

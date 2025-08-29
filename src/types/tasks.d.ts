@@ -1,7 +1,7 @@
 // 任务系统类型定义
 
 // 任务类型
-export type TaskType = 'assistStaticHarvester' | 'assistStaticUpgrader' | 'collectEnergy' | 'supplyEnergy' | 'deliverToSpawn' | 'deliverToCreep' | 'buildStructure' | 'upgradeController';
+export type TaskType = 'assistStaticHarvester' | 'assistStaticUpgrader' | 'assistRemoteHarvester' | 'collectEnergy' | 'supplyEnergy' | 'deliverToSpawn' | 'deliverToCreep' | 'buildStructure' | 'upgradeController';
 
 // 任务状态
 export type TaskStatus = 'pending' | 'assigned' | 'in_progress' | 'completed' | 'failed' | 'expired';
@@ -58,7 +58,7 @@ export interface CollectEnergyTask extends BaseTask {
   storageTargetType?: 'extension' | 'spawn' | 'storage' | 'container'; // 存储目标类型
 }
 
-// 供应能量任务 - 为spawn/extension补充能量 
+// 供应能量任务 - 为spawn/extension补充能量
 export interface SupplyEnergyTask extends BaseTask {
   type: 'supplyEnergy';
   targetId: string;

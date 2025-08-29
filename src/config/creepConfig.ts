@@ -3,7 +3,8 @@ export const ROLE_LIMITS = {
   staticHarvester: 0,  // 静态矿工（根据采矿点数量动态调整）
   upgrader: 5,         // 升级者
   builder: 2,          // 建造者
-  carrier: 5           // 运输者（动态计算，这个值作为备用上限）
+  carrier: 5,          // 运输者（动态计算，这个值作为备用上限）
+  scout: 3             // 侦察兵（动态计算，最多3个）
 };
 
 // 生产新 Creep 的身体部件配置（基础配置）

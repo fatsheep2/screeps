@@ -249,6 +249,11 @@ export class RoleCarrier {
       if (!result.shouldContinue) {
         this.completeTask(creep, task);
       }
+    } else if ((task as any).type === 'assistRemoteHarvester') {
+      const result = this.executeRemoteHarvesterTransportTask(creep, task);
+      if (!result.shouldContinue) {
+        this.completeTask(creep, task);
+      }
     } else if (task.type === 'collectEnergy') {
       const result = this.executeCollectEnergyTask(creep, task);
       if (!result.shouldContinue) {
@@ -688,7 +693,8 @@ export class RoleCarrier {
     // 检查是否为搬运任务（最高优先级，不需要能量）
   private static isTransportTask(task: any): boolean {
     return task.type === 'assistStaticHarvester' ||
-           task.type === 'assistStaticUpgrader';
+           task.type === 'assistStaticUpgrader' ||
+           task.type === 'assistRemoteHarvester';
   }
 
   // 检查是否为能量消耗任务
@@ -737,7 +743,7 @@ export class RoleCarrier {
 
     // 寻找pending状态的搬运任务（优先级：urgent）
     const urgentTasks = Object.values(roomMemory.tasks).filter((task: any) =>
-      (task.type === 'assistStaticHarvester' || task.type === 'assistStaticUpgrader') &&
+      (task.type === 'assistStaticHarvester' || task.type === 'assistStaticUpgrader' || task.type === 'assistRemoteHarvester') &&
       task.status === 'pending' &&
       task.priority === 'urgent'
     );
@@ -904,7 +910,7 @@ export class RoleCarrier {
 
       // 在没有能量源的情况下，仍然可以执行搬运任务来启动经济
       const transportTasks = Object.values(creep.room.memory.tasks || {}).filter((task: any) =>
-        (task.type === 'assistStaticHarvester' || task.type === 'assistStaticUpgrader') &&
+        (task.type === 'assistStaticHarvester' || task.type === 'assistStaticUpgrader' || task.type === 'assistRemoteHarvester') &&
         task.status === 'pending'
       );
 
@@ -1160,5 +1166,155 @@ export class RoleCarrier {
   //   console.log(`[搬运工${creep.name}] 没有找到可用的能量来源`);
   //   return { success: false, shouldContinue: false, message: '没有能量来源' };
   // }
+
+  // 执行外矿搬运任务
+  private static executeRemoteHarvesterTransportTask(creep: Creep, task: any): { shouldContinue: boolean } {
+    const targetRoomName = task.targetRoom;
+
+    // 如果不在目标房间，先移动到目标房间
+    if (creep.room.name !== targetRoomName) {
+      const exitDir = creep.room.findExitTo(targetRoomName);
+      if (exitDir === ERR_NO_PATH || exitDir === ERR_INVALID_ARGS) {
+        console.log(`[搬运工${creep.name}] 无法找到前往外矿房间${targetRoomName}的路径`);
+        return { shouldContinue: false };
+      }
+
+      const exit = creep.pos.findClosestByPath(exitDir);
+      if (exit) {
+        creep.moveTo(exit);
+        creep.say(`➡️ ${targetRoomName}`);
+      }
+      return { shouldContinue: true };
+    }
+
+    // 在目标房间，检查是否需要生成外矿矿工
+    const source = Game.getObjectById(task.sourceId);
+
+    if (!source) {
+      console.log(`[搬运工${creep.name}] 外矿能源点${task.sourceId}不存在`);
+      return { shouldContinue: false };
+    }
+
+    // 检查矿点附近是否有本方的静态矿工
+    const nearbyHarvesters = (source as Source).pos.findInRange(FIND_MY_CREEPS, 1, {
+      filter: (c) => c.memory.role === 'staticHarvester' && c.memory.sourceIndex === task.sourceIndex
+    });
+
+    if (nearbyHarvesters.length === 0) {
+      // 需要生成或搬运外矿矿工
+      console.log(`[搬运工${creep.name}] 外矿房间${targetRoomName}矿点${task.sourceIndex}需要矿工`);
+
+      // 在主房间寻找空闲的静态矿工
+      const homeRoom = Game.rooms[task.homeRoom];
+      if (homeRoom) {
+        const idleHarvesters = homeRoom.find(FIND_MY_CREEPS, {
+          filter: (c) => c.memory.role === 'staticHarvester' && !c.memory.targetId
+        });
+
+        if (idleHarvesters.length > 0) {
+          const harvester = idleHarvesters[0];
+          // 分配外矿任务给矿工
+          harvester.memory.targetId = source.id;
+          harvester.memory.sourceIndex = task.sourceIndex;
+          console.log(`[搬运工${creep.name}] 分配外矿任务给矿工${harvester.name}`);
+        }
+      }
+
+      return { shouldContinue: true };
+    }
+
+    // 矿工已就位，检查是否需要搬运能量
+    const nearbyContainers = (source as Source).pos.findInRange(FIND_STRUCTURES, 2, {
+      filter: (structure) => structure.structureType === STRUCTURE_CONTAINER
+    });
+
+    if (nearbyContainers.length > 0) {
+      const container = nearbyContainers[0] as StructureContainer;
+
+      // 如果容器有能量且搬运工空载，收集能量
+      if (container.store.getUsedCapacity(RESOURCE_ENERGY) > 0 && creep.store.getFreeCapacity() > 0) {
+        if (creep.pos.getRangeTo(container) > 1) {
+          creep.moveTo(container);
+          creep.say('🚛 去收集');
+          return { shouldContinue: true };
+        } else {
+          const withdrawResult = creep.withdraw(container, RESOURCE_ENERGY);
+          if (withdrawResult === OK) {
+            creep.say('⚡ 收集');
+          }
+          return { shouldContinue: true };
+        }
+      }
+
+      // 如果搬运工满载，返回主房间存储
+      if (creep.store.getFreeCapacity() === 0) {
+        // 移动到主房间进行存储
+        if (creep.room.name !== task.homeRoom) {
+          const exitDir = creep.room.findExitTo(task.homeRoom);
+          if (exitDir !== ERR_NO_PATH && exitDir !== ERR_INVALID_ARGS) {
+            const exit = creep.pos.findClosestByPath(exitDir);
+            if (exit) {
+              creep.moveTo(exit);
+              creep.say(`⬅️ 回家`);
+            }
+          }
+          return { shouldContinue: true };
+        } else {
+          // 在主房间，存储到storage或spawn
+          const storage = creep.room.storage;
+          if (storage && storage.store.getFreeCapacity(RESOURCE_ENERGY) > 0) {
+            if (creep.pos.getRangeTo(storage) > 1) {
+              creep.moveTo(storage);
+            } else {
+              creep.transfer(storage, RESOURCE_ENERGY);
+              creep.say('🏪 存储');
+            }
+          } else {
+            // 找到需要能量的建筑
+            const targets = creep.room.find(FIND_STRUCTURES, {
+              filter: (structure) => {
+                return (structure.structureType === STRUCTURE_EXTENSION ||
+                        structure.structureType === STRUCTURE_SPAWN) &&
+                       structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0;
+              }
+            });
+
+            if (targets.length > 0) {
+              const target = creep.pos.findClosestByPath(targets);
+              if (target) {
+                if (creep.pos.getRangeTo(target) > 1) {
+                  creep.moveTo(target);
+                } else {
+                  creep.transfer(target, RESOURCE_ENERGY);
+                  creep.say('⚡ 供能');
+                }
+              }
+            }
+          }
+          return { shouldContinue: true };
+        }
+      }
+    }
+
+    // 检查地上是否有掉落的能量
+    const droppedEnergy = (source as Source).pos.findInRange(FIND_DROPPED_RESOURCES, 2, {
+      filter: (resource) => resource.resourceType === RESOURCE_ENERGY
+    });
+
+    if (droppedEnergy.length > 0 && creep.store.getFreeCapacity() > 0) {
+      const resource = droppedEnergy[0];
+      if (creep.pos.getRangeTo(resource) > 1) {
+        creep.moveTo(resource);
+        creep.say('🚛 去捡');
+      } else {
+        creep.pickup(resource);
+        creep.say('📦 捡取');
+      }
+      return { shouldContinue: true };
+    }
+
+    // 外矿运营正常，任务持续进行
+    return { shouldContinue: true };
+  }
 }
 

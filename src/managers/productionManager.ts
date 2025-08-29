@@ -51,7 +51,8 @@ export class ProductionManager {
       staticHarvesters: optimalHarvesters,
       carriers: requiredCarriers,
       upgraders: optimalUpgraders,
-      builders: optimalBuilders
+      builders: optimalBuilders,
+      scouts: this.calculateOptimalScouts(room, rcl, limits)
     };
   }
 
@@ -212,6 +213,8 @@ export class ProductionManager {
         return this.getUpgraderBody(limits);
       case 'builder':
         return this.getBuilderBody(limits);
+      case 'scout':
+        return this.getScoutBody(limits);
       default:
         return [WORK, CARRY, MOVE]; // 默认配置
     }
@@ -230,6 +233,8 @@ export class ProductionManager {
         return this.getUpgraderBody(limits);
       case 'builder':
         return this.getBuilderBody(limits);
+      case 'scout':
+        return this.getScoutBody(limits);
       default:
         return [WORK, CARRY, MOVE]; // 默认配置
     }
@@ -324,6 +329,34 @@ export class ProductionManager {
 
     return body;
   }
+
+  // 侦察兵身体部件配置
+  private static getScoutBody(_limits: any): BodyPartConstant[] {
+    // 固定配置：2个MOVE(100) + 2个CLAIM(1200) = 1300能量
+    const body = [MOVE, MOVE, CLAIM, CLAIM];
+
+    console.log(`[生产管理] 侦察兵配置: 2MOVE+2CLAIM，总成本: 1300`);
+    return body;
+  }
+
+  // 计算最优侦察兵数量
+  private static calculateOptimalScouts(room: Room, rcl: number, _limits: any): number {
+    // 侦察兵生产条件：RCL4+ 且 energyCapacityAvailable >= 1300
+    if (rcl < 4 || room.energyCapacityAvailable < 1300) {
+      return 0;
+    }
+
+    // 基础配置：每个房间最多1个侦察兵
+    // 如果有外矿目标且需要预定，可能需要额外的侦察兵
+    const roomMemory = Memory.rooms[room.name];
+    const remoteMiningTargets = roomMemory.remoteMiningTargets?.length || 0;
+
+    // 基础1个 + 每2个外矿目标额外1个
+    const baseScouts = 1;
+    const additionalScouts = Math.floor(remoteMiningTargets / 2);
+
+    return Math.min(baseScouts + additionalScouts, 3); // 最多3个侦察兵
+  }
 }
 
 // 生产计划接口
@@ -332,6 +365,7 @@ interface ProductionPlan {
   carriers: number;
   upgraders: number;
   builders: number;
+  scouts: number;
 }
 
 // 兼容性导出函数

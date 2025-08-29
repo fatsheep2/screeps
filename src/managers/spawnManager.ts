@@ -21,13 +21,13 @@ export function spawnCreeps(room: Room, creepCounts: Record<string, number>, has
 
   // 获取实际可分配的upgrader位置数量
   const availableUpgraderPositions = RoleUpgrader.getAvailableUpgraderPositionCount(room);
-  
+
   const dynamicRoleLimits = {
     ...ROLE_LIMITS,
     staticHarvester: miningSpotsCount, // 根据采矿点数量动态调整静态矿工数量
     upgrader: availableUpgraderPositions // 根据实际可分配位置动态调整升级者数量
   };
-  
+
 
   // 根据基础兵种状态调整生产策略
   let priorities: string[];
@@ -40,7 +40,23 @@ export function spawnCreeps(room: Room, creepCounts: Record<string, number>, has
   }
 
   for (const role of priorities) {
-    if (creepCounts[role] < dynamicRoleLimits[role as keyof typeof dynamicRoleLimits]) {
+    // 侦察兵特殊处理：不使用ROLE_LIMITS，而是使用动态计算的需求
+    let shouldProduce = false;
+    if (role === 'scout') {
+      // 侦察兵生产条件：RCL4+ 且 energyCapacityAvailable >= 1300
+      const rcl = room.controller?.level || 1;
+      if (rcl >= 4 && room.energyCapacityAvailable >= 1300) {
+        const roomMemory = Memory.rooms[room.name];
+        const remoteMiningTargets = roomMemory.remoteMiningTargets?.length || 0;
+        const neededScouts = Math.min(1 + Math.floor(remoteMiningTargets / 2), 3);
+        shouldProduce = (creepCounts.scout || 0) < neededScouts;
+      }
+    } else {
+      // 其他角色使用动态限制
+      shouldProduce = creepCounts[role] < dynamicRoleLimits[role as keyof typeof dynamicRoleLimits];
+    }
+
+    if (shouldProduce) {
       // 根据可用能量选择身体部件
       const bodyParts = getOptimalBodyParts(role, roomEnergy, creepCounts);
 
@@ -50,22 +66,32 @@ export function spawnCreeps(room: Room, creepCounts: Record<string, number>, has
 
       const name = `${role}_${Game.time}_${Math.floor(Math.random() * 1000)}`;
 
+      const creepMemory: any = {
+        role: role,
+        room: room.name,
+        working: false
+      };
+
+      // 侦察兵需要记录出生房间
+      if (role === 'scout') {
+        creepMemory.homeRoom = room.name;
+      }
+
       const result = availableSpawn.spawnCreep(bodyParts, name, {
-        memory: {
-          role: role,
-          room: room.name,
-          working: false
-        }
+        memory: creepMemory
       });
 
       if (result === OK) {
+        console.log(`[生产管理] 成功生产${role}: ${name}, 身体部件: ${bodyParts.join(',')}`);
         return;
       } else {
         // 如果是能量不足，尝试下一个角色
         if (result === ERR_NOT_ENOUGH_ENERGY) {
+          console.log(`[生产管理] ${role}能量不足: 需要${getBodyCost(bodyParts)}, 可用${roomEnergy}`);
           continue;
         }
         // 其他错误则停止尝试
+        console.log(`[生产管理] 生产${role}失败: ${result}`);
         break;
       }
     }
@@ -120,6 +146,20 @@ function getAdvancedSpawnPriorities(_room: Room, creepCounts: Record<string, num
     priorities.push('builder');
   }
 
+  // 侦察兵生产条件：RCL4+ 且 energyCapacityAvailable >= 1300
+  const rcl = _room.controller?.level || 1;
+  if (rcl >= 4 && _room.energyCapacityAvailable >= 1300) {
+    // 计算需要的侦察兵数量
+    const roomMemory = Memory.rooms[_room.name];
+    const remoteMiningTargets = roomMemory.remoteMiningTargets?.length || 0;
+    const neededScouts = Math.min(1 + Math.floor(remoteMiningTargets / 2), 3);
+
+    if ((creepCounts.scout || 0) < neededScouts) {
+      priorities.push('scout');
+      console.log(`[生产管理] 房间${_room.name}需要侦察兵: 当前${creepCounts.scout || 0}, 需要${neededScouts}`);
+    }
+  }
+
   return priorities;
 }
 
@@ -136,6 +176,20 @@ function getOptimalBodyParts(role: string, availableEnergy: number, creepCounts:
 
     // 如果能量不足，回退到传统配置
     return getCarrierOptimalParts(availableEnergy, BASE_BODY_PARTS.carrier);
+  }
+
+  // 侦察兵特殊处理：固定配置，需要1300能量
+  if (role === 'scout') {
+    const scoutParts = [MOVE, MOVE, CLAIM, CLAIM];
+    const scoutCost = getBodyCost(scoutParts);
+
+    if (scoutCost <= availableEnergy) {
+      console.log(`[生产管理] 侦察兵配置: ${scoutParts.join(',')}, 成本: ${scoutCost}`);
+      return scoutParts;
+    } else {
+      console.log(`[生产管理] 侦察兵能量不足: 需要${scoutCost}, 可用${availableEnergy}`);
+      return [];
+    }
   }
 
   // 其他工种仍使用RCL配置

@@ -12,6 +12,7 @@ import { RoleTank } from "./roles/tank";
 import { RoleWarrior } from "./roles/warrior";
 import { RoleArcher } from "./roles/archer";
 import { RoleHealer } from "./roles/healer";
+import { RoleScout } from "./roles/scout";
 
 // 将简化的控制台命令暴露到全局作用域
 declare global {
@@ -116,6 +117,9 @@ export const loop = ErrorMapper.wrapLoop(() => {
             break;
           case 'healer':
             RoleHealer.run(creep);
+            break;
+          case 'scout':
+            RoleScout.run(creep);
             break;
           // 其他角色通常不需要跨房间，暂不处理
         }
