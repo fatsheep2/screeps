@@ -59,7 +59,7 @@ export class BuildingLayoutManager {
     return totalBuilt;
   }
 
-  // 检查某一层是否建设完成
+  // 检查某一层是否建设完成（修复跳过障碍物逻辑）
   private static isLayerComplete(room: Room, center: RoomPosition, layer: number): boolean {
     if (layer === 0) return true; // 第0层（中心）总是完成的
 
@@ -69,35 +69,64 @@ export class BuildingLayoutManager {
     }).length;
     const maxExtensions = this.getMaxExtensionsForRCL(room.controller?.level || 1);
 
+    let requiredPositions = 0; // 需要建设的位置数量
+    let completedPositions = 0; // 已完成的位置数量
+
     for (const pos of layerPositions) {
+      if (!this.isPositionInRoom(pos)) continue;
+
       const pattern = this.getPositionPattern(center, pos);
+
+      // 检查地形，墙体位置自动跳过
+      const terrain = Game.map.getRoomTerrain(room.name);
+      if (terrain.get(pos.x, pos.y) === TERRAIN_MASK_WALL) {
+        continue; // 地形墙，跳过不计入完成度
+      }
+
+      // 检查是否有手动建筑，有的话也跳过
+      const existingStructures = room.lookForAt(LOOK_STRUCTURES, pos);
+      const hasNonTargetStructure = existingStructures.some(s => 
+        (pattern === 'EXTENSION' && s.structureType !== STRUCTURE_EXTENSION) ||
+        (pattern === 'ROAD' && s.structureType !== STRUCTURE_ROAD)
+      );
+      
+      if (hasNonTargetStructure) {
+        continue; // 有其他类型建筑，跳过不计入完成度
+      }
 
       if (pattern === 'EXTENSION') {
         // Extension位置：只有在未达到RCL上限时才要求建造
         if (currentExtensions < maxExtensions) {
-          const hasStructure = room.lookForAt(LOOK_STRUCTURES, pos).length > 0;
-          const hasConstructionSite = room.lookForAt(LOOK_CONSTRUCTION_SITES, pos).length > 0;
+          requiredPositions++;
+          
+          const hasTargetStructure = existingStructures.some(s => s.structureType === STRUCTURE_EXTENSION);
+          const hasTargetSite = room.lookForAt(LOOK_CONSTRUCTION_SITES, pos).some(s => s.structureType === STRUCTURE_EXTENSION);
 
-          if (!hasStructure && !hasConstructionSite) {
-            return false; // Extension位置未完成
+          if (hasTargetStructure || hasTargetSite) {
+            completedPositions++;
           }
         }
-        // 如果Extension已达上限，跳过Extension位置的检查
       } else if (pattern === 'ROAD') {
         // Road位置：总是要求建造
-        const hasStructure = room.lookForAt(LOOK_STRUCTURES, pos).length > 0;
-        const hasConstructionSite = room.lookForAt(LOOK_CONSTRUCTION_SITES, pos).length > 0;
+        requiredPositions++;
+        
+        const hasTargetStructure = existingStructures.some(s => s.structureType === STRUCTURE_ROAD);
+        const hasTargetSite = room.lookForAt(LOOK_CONSTRUCTION_SITES, pos).some(s => s.structureType === STRUCTURE_ROAD);
 
-        if (!hasStructure && !hasConstructionSite) {
-          return false; // Road位置未完成
+        if (hasTargetStructure || hasTargetSite) {
+          completedPositions++;
         }
       }
     }
 
-    return true;
+    // 如果没有需要建设的位置，认为该层完成
+    if (requiredPositions === 0) return true;
+    
+    // 所有需要的位置都已完成才算该层完成
+    return completedPositions >= requiredPositions;
   }
 
-  // 建设指定层
+  // 建设指定层（修复跳过障碍物逻辑）
   private static buildLayer(room: Room, center: RoomPosition, layer: number): number {
     let builtCount = 0;
     const layerPositions = this.getLayerPositions(center, layer);
@@ -107,7 +136,8 @@ export class BuildingLayoutManager {
 
       const pattern = this.getPositionPattern(center, pos);
 
-      if (this.canBuildAt(room, pos)) {
+      // 检查位置是否可用于建设（允许跳过被占用的位置）
+      if (this.canBuildAtPosition(room, pos, pattern)) {
         let structureType: BuildableStructureConstant | null = null;
 
         if (pattern === 'EXTENSION') {
@@ -126,11 +156,12 @@ export class BuildingLayoutManager {
         if (structureType) {
           const result = room.createConstructionSite(pos.x, pos.y, structureType);
           if (result === OK) {
-            // console.log(`[建筑管理] 在 (${pos.x},${pos.y}) 创建${structureType}建筑工地`);
+            console.log(`[建筑管理] 在第${layer}层 (${pos.x},${pos.y}) 创建${structureType}建筑工地`);
             builtCount++;
           }
         }
       }
+      // 如果位置被占用，自动跳过继续检查下一个位置
     }
 
     return builtCount;
@@ -174,7 +205,7 @@ export class BuildingLayoutManager {
     }
   }
 
-  // 检查位置是否可以建造
+  // 检查位置是否可以建造（原有方法，保持不变用于其他地方）
   private static canBuildAt(room: Room, pos: RoomPosition): boolean {
     if (!this.isPositionInRoom(pos)) return false;
 
@@ -197,6 +228,46 @@ export class BuildingLayoutManager {
     }
 
     return true;
+  }
+
+  // 智能建设位置检查（允许跳过障碍物继续向外拓展）
+  private static canBuildAtPosition(room: Room, pos: RoomPosition, pattern: string): boolean {
+    if (!this.isPositionInRoom(pos)) return false;
+
+    // 检查地形 - 遇到墙就跳过
+    const terrain = Game.map.getRoomTerrain(room.name);
+    if (terrain.get(pos.x, pos.y) === TERRAIN_MASK_WALL) {
+      return false; // 地形墙无法建设，跳过
+    }
+
+    // 检查已有建筑
+    const existingStructures = room.lookForAt(LOOK_STRUCTURES, pos);
+    if (existingStructures.length > 0) {
+      // 已有建筑，检查是否是我们想要的类型
+      const targetStructureType = pattern === 'EXTENSION' ? STRUCTURE_EXTENSION : 
+                                  pattern === 'ROAD' ? STRUCTURE_ROAD : null;
+      
+      const hasTargetStructure = existingStructures.some(s => s.structureType === targetStructureType);
+      if (hasTargetStructure) {
+        return false; // 已经有想要的建筑，跳过
+      }
+      
+      // 有其他建筑（如手动放置的container），跳过这个位置
+      return false;
+    }
+
+    // 检查建筑工地
+    const existingSites = room.lookForAt(LOOK_CONSTRUCTION_SITES, pos);
+    if (existingSites.length > 0) {
+      // 已有建筑工地，检查类型
+      const targetStructureType = pattern === 'EXTENSION' ? STRUCTURE_EXTENSION : 
+                                  pattern === 'ROAD' ? STRUCTURE_ROAD : null;
+      
+      const hasTargetSite = existingSites.some(s => s.structureType === targetStructureType);
+      return !hasTargetSite; // 如果已有相同类型的工地，跳过；否则可以建设
+    }
+
+    return true; // 位置空闲，可以建设
   }
 
   // 检查位置是否在房间范围内
