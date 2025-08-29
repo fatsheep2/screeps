@@ -1,5 +1,4 @@
 import { expect } from 'chai';
-import { RoleTank } from '../../src/roles/tank';
 
 describe('跨房间移动测试', () => {
   describe('视野检测逻辑', () => {
@@ -30,7 +29,6 @@ describe('跨房间移动测试', () => {
         }
       };
 
-      const sourceRoom = 'W1N1';
       const targetRoom = 'W1N2';
       
       // 在源房间 - 应该移动到目标房间中心

@@ -65,23 +65,85 @@ export class RoleCarrier {
       return;
     }
 
-    // 没有任务时，根据能量状态决定行为
+    // 没有任务时，尝试获取批处理任务
+    const batchTasks = TaskBatchingManager.createBatchedTask(creep, creep.room);
+    if (batchTasks.length > 1) {
+      TaskBatchingManager.assignBatchToCarrier(creep, batchTasks, creep.room);
+      creep.say('📋 批处理');
+      return;
+    } else if (batchTasks.length === 1) {
+      // 单个任务，正常分配
+      const task = batchTasks[0];
+      const roomMemory = Memory.rooms[creep.room.name];
+      if (roomMemory && roomMemory.tasks) {
+        task.assignedTo = creep.id;
+        task.assignedAt = Game.time;
+        task.status = 'assigned';
+        creep.memory.currentTaskId = task.id;
+        roomMemory.tasks[task.id] = task;
+      }
+      return;
+    }
+
+    // 没有批处理任务时，根据能量状态决定行为
     if (currentEnergy > 0) {
-      // 有能量时：尝试获取消耗类任务，没有则存储到storage
-      const consumingTasks = TaskBatchingManager.createBatchedTask(creep, creep.room);
-      if (consumingTasks.length > 0) {
-        TaskBatchingManager.assignBatchToCarrier(creep, consumingTasks, creep.room);
-        creep.say('📋 批处理');
+      // 有能量但没有任务，检查是否需要存储到storage
+      const storage = creep.room.storage;
+
+      if (!storage) {
+        // 没有storage，待机
+        creep.say('⏸️ 无storage');
+        return;
+      }
+
+      const storageEnergyRatio = storage.store.getUsedCapacity(RESOURCE_ENERGY) / storage.store.getCapacity(RESOURCE_ENERGY);
+
+      // 检查是否有紧急需求（spawn/extension缺能量）
+      const urgentStructures = creep.room.find(FIND_MY_STRUCTURES, {
+        filter: (structure) => {
+          return (structure.structureType === STRUCTURE_SPAWN ||
+                  structure.structureType === STRUCTURE_EXTENSION) &&
+                 structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0;
+        }
+      });
+
+      if (urgentStructures.length > 0) {
+        // 有紧急需求，优先补充spawn/extension
+        const target = creep.pos.findClosestByRange(urgentStructures);
+        if (target) {
+          this.transferToTarget(creep, target as StructureSpawn | StructureExtension, '🚨 紧急补能');
+          return;
+        }
+      }
+
+      // 提高storage存储阈值，避免频繁操作
+      if (storageEnergyRatio < 0.7 && currentEnergy >= creep.store.getCapacity() * 0.8) {
+        // 只有当storage确实需要能量且搬运工携带足够能量时才存储
+        this.storeToStorage(creep);
         return;
       } else {
-        // 没有消耗任务，存储到storage
-        this.storeToStorage(creep);
+        // 否则待机，避免无意义的转移
+        creep.say('💤 待机');
         return;
       }
     } else {
-      // 没有能量时：收集能量
-      this.collectResources(creep);
-      return;
+      // 没有能量时，限制检查频率避免无意义操作
+      if (Game.time % 3 === 0 && this.checkForEnergySource(creep)) {
+        this.collectResources(creep);
+        return;
+      } else {
+        // 没有能量源，检查紧急搬运任务
+        const urgentTask = this.findUrgentTransportTask(creep);
+        if (urgentTask) {
+          this.assignTask(creep, urgentTask);
+          this.executeTask(creep, urgentTask);
+          return;
+        } else {
+          // 真的没事做，待机
+          creep.say('⏸️ 待机');
+          return;
+        }
+      }
     }
   }
 

@@ -16,6 +16,7 @@ declare global {
     miningSpots: string[]; // 记录可用的采矿点
     totalAvailableSpots: number; // 记录总可用空地数量
     tasks?: { [taskId: string]: any }; // 任务系统
+    upgraderPositions?: string[]; // 缓存的升级者位置数组
   }
 
   interface CreepMemory {

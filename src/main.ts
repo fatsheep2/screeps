@@ -15,6 +15,9 @@ declare global {
   var showTanks: typeof ConsoleCommands.showTanks;
   var stopAttack: typeof ConsoleCommands.stopAttack;
   var help: typeof ConsoleCommands.help;
+  var clearMoveCache: typeof ConsoleCommands.clearMoveCache;
+  var clearAllTankCache: typeof ConsoleCommands.clearAllTankCache;
+  var checkRoomConnection: typeof ConsoleCommands.checkRoomConnection;
 
 
   // 搬运工诊断命令
@@ -29,6 +32,9 @@ global.testMove = ConsoleCommands.testMove;
 global.showTanks = ConsoleCommands.showTanks;
 global.stopAttack = ConsoleCommands.stopAttack;
 global.help = ConsoleCommands.help;
+global.clearMoveCache = ConsoleCommands.clearMoveCache;
+global.clearAllTankCache = ConsoleCommands.clearAllTankCache;
+global.checkRoomConnection = ConsoleCommands.checkRoomConnection;
 
 
 // 暴露搬运工诊断命令

@@ -23,19 +23,11 @@ export class ProductionManager {
 
   // 主入口：更新房间生产计划
   public static updateProductionPlan(room: Room): void {
-    console.log(`[生产管理] 开始更新房间 ${room.name} 的生产计划`);
-
     const rcl = room.controller?.level || 1;
     const plan = this.calculateOptimalProductionPlan(room, rcl);
 
     // 更新房间内存中的生产目标
     this.updateRoomMemoryTargets(room, plan);
-
-    console.log(`[生产管理] 房间 ${room.name} 生产计划:
-      矿工: ${plan.staticHarvesters}
-      搬运工: ${plan.carriers}
-      升级者: ${plan.upgraders}
-      建筑者: ${plan.builders}`);
   }
 
   // 计算最优生产计划
@@ -64,7 +56,7 @@ export class ProductionManager {
   }
 
   // 计算最优矿工数量和配置
-  private static calculateOptimalHarvesters(sources: Source[], limits: any, rcl: number): number {
+  private static calculateOptimalHarvesters(sources: Source[], limits: any, _rcl: number): number {
     const sourceCount = sources.length;
 
     // 计算每个矿工需要的WORK部件数
@@ -74,18 +66,15 @@ export class ProductionManager {
       6 // 最多6个WORK部件就能完全采集一个矿点
     );
 
-    console.log(`[生产管理] RCL${rcl}: 计算每个矿工需要${targetWorkParts}个WORK部件`);
 
     // 检查能量是否足够支持这样的矿工
     const workerCost = targetWorkParts * 150; // WORK + MOVE + CARRY 的基本成本
     if (workerCost <= limits.maxCreepCost) {
-      console.log(`[生产管理] 能量充足，每个矿点配置1个${targetWorkParts}WORK矿工`);
       return sourceCount; // 每个矿点一个高效矿工
     } else {
       // 能量不足时，使用更多低级矿工
       const affordableWorkParts = Math.floor(limits.maxCreepCost / 150);
       const workersPerSource = Math.ceil(targetWorkParts / affordableWorkParts);
-      console.log(`[生产管理] 能量不足，每个矿点需要${workersPerSource}个${affordableWorkParts}WORK矿工`);
       return sourceCount * workersPerSource;
     }
   }
@@ -114,7 +103,6 @@ export class ProductionManager {
     }
 
     const finalCount = Math.min(totalCarriers, 5); // 硬上限降到5个
-    console.log(`[生产管理] 搬运工需求计算: 矿点${miningCarriers}+配送${deliveryCarriers}+基础${baseCarriers}=总计${finalCount}`);
 
     return finalCount;
   }
@@ -138,7 +126,6 @@ export class ProductionManager {
     const maxPositions = RoleUpgrader.getAvailableUpgraderPositionCount(room);
 
     if (maxPositions === 0) {
-      console.log(`[生产管理] 房间 ${room.name} 没有找到可用的升级者位置，不生产升级者`);
       return 0;
     }
 
@@ -166,7 +153,6 @@ export class ProductionManager {
     // 以可用位置数量为上限
     const finalCount = Math.min(optimalCount, maxPositions);
 
-    console.log(`[生产管理] 房间 ${room.name} 升级者计算: 基础${baseUpgraders}个, 优化后${optimalCount}个, 可用位置${maxPositions}个, 最终${finalCount}个`);
 
     return finalCount;
   }
@@ -200,7 +186,6 @@ export class ProductionManager {
     roomMemory.upgraders = this.smoothTransition(roomMemory.upgraders, plan.upgraders);
     roomMemory.builders = this.smoothTransition(roomMemory.builders, plan.builders);
 
-    console.log(`[生产管理] 更新生产目标完成`);
   }
 
   // 平滑过渡函数，避免生产计划剧烈变化
@@ -267,7 +252,6 @@ export class ProductionManager {
     // 静态矿工只有WORK部件，已经是排序的
     const body = [...workPartsArray];
 
-    console.log(`[生产管理] 静态矿工配置: ${workParts}个WORK，总成本: ${workParts * 100}`);
     return body;
   }
 
@@ -290,7 +274,6 @@ export class ProductionManager {
     // 按顺序排列：CARRY -> MOVE
     const body = [...carryParts, ...moveParts];
 
-    console.log(`[生产管理] 搬运工身体配置: ${units}组(2CARRY+1MOVE), 总部件: ${carryParts.length}C+${moveParts.length}M, 总成本: ${units * unitCost}, 容量: ${units * 100}`);
     return body;
   }
 
@@ -339,7 +322,6 @@ export class ProductionManager {
     // 按顺序排列：MOVE -> WORK -> CARRY
     const body = [...moveParts, ...workParts, ...carryParts];
 
-    console.log(`[生产管理] 建筑者配置: ${units}组(1MOVE+2WORK+2CARRY)，总部件: ${moveParts.length}M+${workParts.length}W+${carryParts.length}C，总成本: ${units * unitCost}`);
     return body;
   }
 }

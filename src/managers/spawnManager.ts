@@ -1,6 +1,7 @@
 import { ROLE_LIMITS, BASE_BODY_PARTS, BODY_EXTENSIONS } from '../config/creepConfig';
 import { getBodyCost } from '../utils/creepUtils';
 import { getRecommendedBodyParts, getRecommendedBodyPartsWithEnergy } from './productionManager';
+import { RoleUpgrader } from '../roles/upgrader';
 
 // 尝试生产新 Creep
 export function spawnCreeps(room: Room, creepCounts: Record<string, number>, hasBasic: boolean): void {
@@ -18,10 +19,15 @@ export function spawnCreeps(room: Room, creepCounts: Record<string, number>, has
   const miningSpots = (Memory.rooms[room.name] as any)?.miningSpots || [];
   const miningSpotsCount = miningSpots.length;
 
+  // 获取实际可分配的upgrader位置数量
+  const availableUpgraderPositions = RoleUpgrader.getAvailableUpgraderPositionCount(room);
+  
   const dynamicRoleLimits = {
     ...ROLE_LIMITS,
-    staticHarvester: miningSpotsCount // 根据采矿点数量动态调整静态矿工数量
+    staticHarvester: miningSpotsCount, // 根据采矿点数量动态调整静态矿工数量
+    upgrader: availableUpgraderPositions // 根据实际可分配位置动态调整升级者数量
   };
+  
 
   // 根据基础兵种状态调整生产策略
   let priorities: string[];
@@ -125,12 +131,10 @@ function getOptimalBodyParts(role: string, availableEnergy: number, creepCounts:
     const energyBasedCost = getBodyCost(energyBasedParts);
 
     if (energyBasedCost <= availableEnergy && energyBasedParts.length > 0) {
-      console.log(`[生产管理] 搬运工使用能量配置: ${energyBasedParts.join(',')}, 成本: ${energyBasedCost}, 容量: ${energyBasedParts.filter((p: BodyPartConstant) => p === CARRY).length * 50}`);
       return energyBasedParts;
     }
 
     // 如果能量不足，回退到传统配置
-    console.log(`[生产管理] 搬运工能量不足(${energyBasedCost}>${availableEnergy})，回退到传统配置`);
     return getCarrierOptimalParts(availableEnergy, BASE_BODY_PARTS.carrier);
   }
 

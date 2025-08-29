@@ -1,6 +1,119 @@
 // 简化的控制台命令工具
 // 只保留核心命令，移除复杂的威胁评估和编组系统
 
+// 清理creep的move缓存（修复跨房间移动卡住问题）
+export function clearMoveCache(creepName: string): void {
+  const creep = Game.creeps[creepName];
+  if (!creep) {
+    console.log(`❌ Creep ${creepName} 不存在`);
+    return;
+  }
+
+  delete (creep.memory as any)._move;
+  console.log(`✅ 已清理 ${creepName} 的move缓存`);
+  console.log(`📍 当前位置: ${creep.room.name} (${creep.pos.x},${creep.pos.y})`);
+  
+  if (creep.memory.attackTarget) {
+    console.log(`🎯 攻击目标: ${creep.memory.attackTarget}`);
+  }
+  if (creep.memory.testMoveToRoom) {
+    console.log(`🧪 测试目标: ${creep.memory.testMoveToRoom}`);
+  }
+}
+
+// 清理所有tank的move缓存
+export function clearAllTankCache(): void {
+  let clearedCount = 0;
+  for (const creepName in Game.creeps) {
+    const creep = Game.creeps[creepName];
+    if (creep.memory.role === 'tank' && (creep.memory as any)._move) {
+      delete (creep.memory as any)._move;
+      clearedCount++;
+      console.log(`✅ 清理了 ${creep.name} 的move缓存`);
+    }
+  }
+  console.log(`🧹 总共清理了 ${clearedCount} 个tank的move缓存`);
+}
+
+// 检查房间连接性
+export function checkRoomConnection(fromRoom: string, toRoom: string): void {
+  const room = Game.rooms[fromRoom];
+  if (!room) {
+    console.log(`❌ 没有房间 ${fromRoom} 的视野`);
+    return;
+  }
+
+  console.log(`🔍 检查房间连接: ${fromRoom} → ${toRoom}`);
+  
+  // 检查是否相邻
+  const fromCoord = parseRoomName(fromRoom);
+  const toCoord = parseRoomName(toRoom);
+  
+  if (!fromCoord || !toCoord) {
+    console.log(`❌ 房间名格式错误`);
+    return;
+  }
+
+  const dx = Math.abs(fromCoord.x - toCoord.x);
+  const dy = Math.abs(fromCoord.y - toCoord.y);
+  const isAdjacent = (dx <= 1 && dy <= 1) && (dx + dy > 0);
+  
+  console.log(`📍 ${fromRoom}: (${fromCoord.x}, ${fromCoord.y})`);
+  console.log(`📍 ${toRoom}: (${toCoord.x}, ${toCoord.y})`);
+  console.log(`📏 距离: dx=${dx}, dy=${dy}, 相邻=${isAdjacent}`);
+
+  if (!isAdjacent) {
+    console.log(`❌ 房间不相邻，无法直接移动`);
+    return;
+  }
+
+  // 检查出口
+  const exitDirection = room.findExitTo(toRoom);
+  if (exitDirection === ERR_NO_PATH) {
+    console.log(`❌ 没有到 ${toRoom} 的路径`);
+  } else if (exitDirection === ERR_INVALID_ARGS) {
+    console.log(`❌ 房间参数无效`);
+  } else {
+    console.log(`✅ 找到出口方向: ${getDirectionName(exitDirection)}`);
+    
+    // 检查出口位置
+    const exits = room.find(exitDirection as FindConstant);
+    console.log(`🚪 出口数量: ${exits.length}`);
+    
+    if (exits.length > 0) {
+      const firstExit = exits[0] as RoomPosition;
+      console.log(`🎯 第一个出口位置: (${firstExit.x}, ${firstExit.y})`);
+    }
+  }
+}
+
+// 解析房间名
+function parseRoomName(roomName: string): {x: number, y: number} | null {
+  const match = roomName.match(/^([WE])(\d+)([NS])(\d+)$/);
+  if (!match) return null;
+  
+  const [, xDir, xNum, yDir, yNum] = match;
+  const x = xDir === 'W' ? -parseInt(xNum) : parseInt(xNum);
+  const y = yDir === 'N' ? -parseInt(yNum) : parseInt(yNum);
+  
+  return {x, y};
+}
+
+// 获取方向名称
+function getDirectionName(direction: any): string {
+  const names: {[key: number]: string} = {
+    1: 'TOP',
+    2: 'TOP_RIGHT', 
+    3: 'RIGHT',
+    4: 'BOTTOM_RIGHT',
+    5: 'BOTTOM',
+    6: 'BOTTOM_LEFT',
+    7: 'LEFT',
+    8: 'TOP_LEFT'
+  };
+  return names[direction] || `UNKNOWN(${direction})`;
+}
+
 // 简化的攻击命令 - 主要命令
 export function attack(sourceRoom: string, targetRoom: string): void {
   const room = Game.rooms[sourceRoom];

@@ -72,7 +72,6 @@ function cleanupCompletedTransportTasks(room: Room): void {
     // 检查任务是否过期
     if (task.expiresAt && Game.time > task.expiresAt) {
       tasksToDelete.push(task.id);
-      console.log(`[房间管理器] 任务过期，删除: ${task.id}`);
       return;
     }
 
@@ -90,24 +89,20 @@ function cleanupCompletedTransportTasks(room: Room): void {
       const harvester = Game.getObjectById(task.harvesterId) as Creep;
       if (!harvester || harvester.memory.working === true) {
         tasksToDelete.push(task.id);
-        console.log(`[房间管理器] 矿工任务完成，删除: ${task.id}`);
       }
     } else if (task.type === 'assistStaticUpgrader') {
       const upgrader = Game.getObjectById(task.upgraderId) as Creep;
       if (!upgrader || upgrader.memory.working === true) {
         tasksToDelete.push(task.id);
-        console.log(`[房间管理器] 升级者任务完成，删除: ${task.id}`);
       }
     } else if (task.type === 'collectEnergy') {
       const target = Game.getObjectById(task.targetId);
       if (!target) {
         tasksToDelete.push(task.id);
-        console.log(`[房间管理器] 收集目标不存在，删除: ${task.id}`);
       }
     } else if (task.type === 'transferEnergy') {
       // 清理所有transfer任务，改为搬运工自主决策
       tasksToDelete.push(task.id);
-      console.log(`[房间管理器] 清理transfer任务，改为自主决策: ${task.id}`);
     }
 
     // **新增：检查长时间无法完成的能量消耗任务（避免死锁）**
@@ -123,7 +118,6 @@ function cleanupCompletedTransportTasks(room: Room): void {
         const canGetEnergy = checkRoomForEnergySource(room);
 
         if (!hasEnergy && !canGetEnergy) {
-          console.log(`[房间管理器] 释放无法完成的能量任务(无能量源): ${task.id}，搬运工: ${carrier.name}`);
           tasksToReset.push(task.id);
           // 清除搬运工的任务记忆
           delete carrier.memory.currentTaskId;
@@ -146,7 +140,6 @@ function cleanupCompletedTransportTasks(room: Room): void {
       task.assignedTo = null;
       task.assignedAt = null;
       task.status = 'pending';
-      console.log(`[房间管理器] 搬运工死亡，重置任务${taskId}到pending状态`);
     }
   });
 }
@@ -238,9 +231,7 @@ function assignPendingTasksToCarriers(room: Room): void {
       // 更新房间内存中的任务
       roomMemory.tasks![task.id] = task;
 
-      console.log(`[房间管理器] 分配任务 ${task.type}:${task.id} 给搬运工 ${availableCarrier.name}`);
     } else {
-      // console.log(`[房间管理器] 没有空闲搬运工执行任务 ${task.type}:${task.id}`);
     }
   }
 }
@@ -392,18 +383,12 @@ function scanStaticUpgradersForTransport(room: Room): void {
     filter: (c) => c.memory.role === 'upgrader'
   });
 
-  console.log(`[房间管理器] 房间${room.name}总共有${allUpgraders.length}个升级者`);
-
-  // 逐个检查每个upgrader的状态
-  for (const upgrader of allUpgraders) {
-    const hasTargetId = !!upgrader.memory.targetId;
-    const moveParts = upgrader.getActiveBodyparts(MOVE);
-    const isWorking = upgrader.memory.working;
-
-    console.log(`[房间管理器] 升级者${upgrader.name}: targetId=${hasTargetId ? upgrader.memory.targetId : 'NO'}, MOVE部件=${moveParts}, working=${isWorking}, 位置=(${upgrader.pos.x},${upgrader.pos.y})`);
+  // 限制日志输出频率 - 每10tick输出一次详细信息
+  if (Game.time % 10 === 0) {
+    console.log(`[房间管理器] 房间${room.name}总共有${allUpgraders.length}个升级者`);
   }
 
-  // 现在按原条件筛选
+  // 现在按原条件筛选需要搬运的升级者
   const staticUpgraders = room.find(FIND_MY_CREEPS, {
     filter: (c) => c.memory.role === 'upgrader' &&
                    c.memory.targetId &&
@@ -411,7 +396,10 @@ function scanStaticUpgradersForTransport(room: Room): void {
                    c.memory.working !== true
   });
 
-  console.log(`[房间管理器] 符合搬运条件的升级者: ${staticUpgraders.length}个`);
+  // 只在有需要搬运的升级者时输出日志
+  if (staticUpgraders.length > 0 || Game.time % 20 === 0) {
+    console.log(`[房间管理器] 符合搬运条件的升级者: ${staticUpgraders.length}个`);
+  }
 
   for (const upgrader of staticUpgraders) {
     // 检查是否已有搬运任务

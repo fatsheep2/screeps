@@ -92,55 +92,44 @@ export class RoleUpgrader {
       }
     }
 
-    // 分配升级位置（棋盘布局，支持搬运工通行）
+    // 分配升级位置（从memory的位置数组中选择未被预订的位置）
     private static assignUpgradePosition(creep: Creep): void {
       const controller = creep.room.controller;
       if (!controller) return;
 
-      // 使用实际的升级者数量而不是房间内存中的滞后值
-      // 获取房间中所有静态升级者（包括已分配位置和未分配位置的）
+      // 从memory获取预计算的升级者位置数组
+      const allAvailablePositions = this.getUpgraderPositions(controller.pos);
+      
+      if (allAvailablePositions.length === 0) {
+        console.log(`[升级者${creep.name}] 错误: 房间${creep.room.name}没有可用的升级者位置`);
+        creep.say('❌ 无位置');
+        return;
+      }
+
+      // 获取当前已被预订的位置
       const allUpgraders = creep.room.find(FIND_MY_CREEPS, {
-        filter: (c) => c.memory.role === 'upgrader'
+        filter: (c) => c.memory.role === 'upgrader' && c.memory.targetId
       });
+      const occupiedPositions = allUpgraders.map(c => c.memory.targetId);
 
-      const staticUpgraders = allUpgraders.filter(c => c.memory.targetId);
-
-
-
-      // 在控制器7x7范围内寻找升级者位置（按距离主城排序）
-      const controllerPos = controller.pos;
-      const allAvailablePositions = this.getUpgraderPositions(controllerPos);
-
-      // 根据实际升级者数量确定需要的位置数量
-      const neededPositions = allUpgraders.length;
-      const upgraderPositions = allAvailablePositions.slice(0, neededPositions);
-
-
-
-      // 检查哪些位置已被占用
-      const occupiedPositions = staticUpgraders.map(c => c.memory.targetId);
-
-      // 按优先级分配位置（距离主城最近的优先）
-      for (const pos of upgraderPositions) {
+      // 按优先级顺序遍历位置数组，找到第一个未被预订的位置
+      for (const pos of allAvailablePositions) {
         if (!occupiedPositions.includes(pos)) {
           const [x, y] = pos.split(',').map(Number);
           const targetPos = new RoomPosition(x, y, creep.room.name);
 
-          // 检查位置是否可用
+          // 最终检查位置是否真的可用（可能有临时障碍物）
           if (this.isPositionSuitableForUpgrader(targetPos, creep.room)) {
             creep.memory.targetId = pos;
-
-            // 计算距离信息
-            // const distanceToController = controllerPos.getRangeTo(targetPos);
-            // const spawns = creep.room.find(FIND_MY_SPAWNS);
-            // const distanceToSpawn = spawns.length > 0 ? spawns[0].pos.getRangeTo(targetPos) : 0;
-
             return;
           }
         }
       }
 
-
+      // 所有预计算位置都被占用，输出警告
+      console.log(`[升级者${creep.name}] 警告: 所有${allAvailablePositions.length}个升级位置都已被占用`);
+      console.log(`[升级者${creep.name}] 已占用位置: ${occupiedPositions.join(', ')}`);
+      creep.say('❌ 位置满');
     }
 
     // 获取可用升级者位置数量（公开方法，供生产管理器使用）
@@ -151,10 +140,41 @@ export class RoleUpgrader {
       return positions.length;
     }
 
-    // 获取控制器周围的升级者位置（7x7范围，按距离主城排序）
+    // 强制重新计算升级者位置（当建筑布局变化时调用）
+    public static recalculateUpgraderPositions(room: Room): void {
+      if (!room.controller) return;
+      
+      // 清除memory中的缓存
+      const roomMemory = Memory.rooms[room.name];
+      if (roomMemory) {
+        delete (roomMemory as any).upgraderPositions;
+      }
+      
+      // 重新计算并缓存
+      this.calculateAndCacheUpgraderPositions(room);
+    }
+
+    // 获取控制器周围的升级者位置（从memory缓存中获取或重新计算）
     private static getUpgraderPositions(controllerPos: RoomPosition): string[] {
-      const positions: { pos: string; distanceToController: number; distanceToSpawn: number }[] = [];
       const room = Game.rooms[controllerPos.roomName];
+      const roomMemory = Memory.rooms[room.name];
+      
+      // 检查memory中是否有缓存的位置数组
+      if (roomMemory && roomMemory.upgraderPositions && roomMemory.upgraderPositions.length > 0) {
+        return roomMemory.upgraderPositions;
+      }
+
+      // 没有缓存，重新计算并保存到memory
+      return this.calculateAndCacheUpgraderPositions(room);
+    }
+
+    // 计算并缓存升级者位置到房间memory
+    private static calculateAndCacheUpgraderPositions(room: Room): string[] {
+      const controller = room.controller;
+      if (!controller) return [];
+
+      const positions: { pos: string; distanceToController: number; distanceToSpawn: number }[] = [];
+      const controllerPos = controller.pos;
 
       // 找到房间的主城（Spawn）位置
       const spawns = room.find(FIND_MY_SPAWNS);
@@ -165,7 +185,6 @@ export class RoleUpgrader {
         for (let dy = -3; dy <= 3; dy++) {
           if (dx === 0 && dy === 0) continue; // 跳过控制器本身位置
 
-
           const x = controllerPos.x + dx;
           const y = controllerPos.y + dy;
 
@@ -173,42 +192,55 @@ export class RoleUpgrader {
 
           const terrain = Game.map.getRoomTerrain(controllerPos.roomName);
           if (terrain.get(x, y) !== TERRAIN_MASK_WALL) {
-
             const pos = new RoomPosition(x, y, controllerPos.roomName);
 
-            // 棋盘布局：以主城坐标为基准，使用相同的奇偶性模式
-            // 这样便于后期铺路规划
-            const isCheckerboard = (x + y) % 2 === (spawnPos.x + spawnPos.y) % 2;
+            // 检查是否有不可通行的建筑（排除道路）
+            if (this.isPositionSuitableForUpgrader(pos, room)) {
+              // 棋盘布局：以主城为模（奇偶性基准），与主城路网保持一致
+              const isCheckerboard = (x + y) % 2 === (spawnPos.x + spawnPos.y) % 2;
 
-            // 选择棋盘位置，为搬运工留出通道
-            if (isCheckerboard) {
-              const distanceToSpawn = spawnPos.getRangeTo(pos);
-              const distanceToController = Math.max(Math.abs(dx), Math.abs(dy));
+              if (isCheckerboard) {
+                const distanceToSpawn = spawnPos.getRangeTo(pos);
+                const distanceToController = Math.max(Math.abs(dx), Math.abs(dy));
 
-              positions.push({
-                pos: `${x},${y}`,
-                distanceToController: distanceToController,
-                distanceToSpawn: distanceToSpawn
-              });
+                positions.push({
+                  pos: `${x},${y}`,
+                  distanceToController: distanceToController,
+                  distanceToSpawn: distanceToSpawn
+                });
+              }
             }
           }
         }
       }
 
-
-
-      // 按优先级排序：只考虑距离主城，便于能量配送
+      // 按优先级排序：距离控制器近的优先（1格距离优先），同等距离时按距离主城排序
       positions.sort((a, b) => {
+        if (a.distanceToController !== b.distanceToController) {
+          return a.distanceToController - b.distanceToController;
+        }
         return a.distanceToSpawn - b.distanceToSpawn;
       });
 
-      // 输出详细的位置信息
-      // const positionDetails = positions.slice(0, 10).map(p =>
-      //   `(${p.pos}) 距控制器${p.distanceToController}格,距主城${p.distanceToSpawn}格`
-      // ).join(', ');
+      const positionArray = positions.map(p => p.pos);
 
+      // 保存到房间memory
+      if (!Memory.rooms[room.name]) {
+        Memory.rooms[room.name] = {
+          staticHarvesters: 0,
+          upgraders: 0,
+          builders: 0,
+          carriers: 0,
+          miningSpots: [],
+          totalAvailableSpots: 0,
+          tasks: {}
+        };
+      }
+      
+      (Memory.rooms[room.name] as any).upgraderPositions = positionArray;
 
-      return positions.map(p => p.pos);
+      console.log(`[升级者] 房间${room.name}计算升级者位置: 共${positionArray.length}个可用位置已缓存到memory`);
+      return positionArray;
     }
 
     // 检查位置是否适合放置升级者
