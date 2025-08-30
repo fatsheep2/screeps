@@ -2,7 +2,7 @@
 export function updateMiningSpots(room: Room): void {
   const sources = room.find(FIND_SOURCES);
   const spawn = room.find(FIND_MY_SPAWNS)[0];
-  
+
   if (!spawn) {
     console.log(`[采矿点管理] 房间 ${room.name} 没有spawn，跳过miningSpots计算`);
     return;
@@ -30,7 +30,7 @@ export function updateMiningSpots(room: Room): void {
           const terrain = room.lookForAt(LOOK_TERRAIN, pos)[0];
           if (terrain !== 'wall') {
             const distance = pos.getRangeTo(spawn);
-            
+
             // 更新最近位置
             if (distance < closestDistance) {
               closestDistance = distance;
@@ -52,7 +52,7 @@ export function updateMiningSpots(room: Room): void {
   if (Memory.rooms[room.name]) {
     (Memory.rooms[room.name] as any).miningSpots = optimalContainerSpots;
     (Memory.rooms[room.name] as any).totalAvailableSpots = optimalContainerSpots.length;
-    
+
     console.log(`[采矿点管理] 房间 ${room.name} 更新完成: ${sources.length}个矿点，${optimalContainerSpots.length}个最优container位置`);
   }
 }

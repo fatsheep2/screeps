@@ -63,8 +63,8 @@ export class RoleUpgrader {
 
       // 查找是否已有搬运任务
       const existingTask = Object.values(roomMemory.tasks).find((task: any) =>
-        task.type === 'assist_upgrader' &&
-        task.targetId === creep.id
+        task.type === 'assistStaticUpgrader' &&
+        task.upgraderId === creep.id
       );
 
       if (!existingTask) {
@@ -73,20 +73,46 @@ export class RoleUpgrader {
         return;
       }
 
-      // 已有任务，显示状态并配合搬运工
-      const statusText = existingTask.assignedTo ? '🚛 搬运中' : '⏳ 等待分配';
-      creep.say(statusText);
+      // 如果任务已分配且在执行中，检查搬运工是否在身边
+      if (existingTask.assignedTo && existingTask.status === 'IN_PROGRESS') {
+        // assignedTo存储的是creep.id，用ID查找
+        let assignedCarrier = Game.getObjectById(existingTask.assignedTo) as Creep;
+        if (!assignedCarrier) {
+          // 如果ID查找失败，尝试按名字查找（兼容旧数据）
+          assignedCarrier = Game.creeps[existingTask.assignedTo];
+        }
 
-      // 如果任务已分配，检查搬运工是否在身边
-      if (existingTask.assignedTo) {
-        const assignedCarrier = Game.getObjectById(existingTask.assignedTo) as Creep;
+        if (!assignedCarrier) {
+          // 搬运工已死亡，立即重置自己的状态
+          (creep.memory as any).working = false;
+          creep.say('💀 搬运工死亡');
+          console.log(`[静态升级者] ${creep.name} 的搬运工已死亡，重置工作状态`);
+          return;
+        }
+
         if (assignedCarrier && creep.pos.isNearTo(assignedCarrier.pos)) {
-          // 搬运工在身边，升级者配合pull操作
+          // 检查自己是否已经能够工作（在目标位置且能升级）
+          if (this.canWork(creep)) {
+            // 能工作了，设置working状态，任务系统会检测并完成任务
+            creep.memory.working = true;
+            creep.say('⚡ 开工');
+            console.log(`[静态升级者] ${creep.name} 到达工作位置`);
+            return;
+          }
+          
+          // 还不能工作，继续配合搬运工
+          // 标准Screeps pull机制：被拉拽者必须 move(搬运工)
           const moveResult = creep.move(assignedCarrier);
           if (moveResult === OK) {
-            creep.say('🤝 配合搬运');
+            creep.say('🤝 配合');
+          } else {
+            creep.say(`🔄 配合(${moveResult})`);
           }
+        } else if (assignedCarrier) {
+          creep.say('⏳ 等待');
         }
+      } else if (existingTask.assignedTo && existingTask.status === 'assigned') {
+        creep.say('📋 已派工');
       }
     }
 
@@ -97,7 +123,7 @@ export class RoleUpgrader {
 
       // 从memory获取预计算的升级者位置数组
       const allAvailablePositions = this.getUpgraderPositions(controller.pos);
-      
+
       if (allAvailablePositions.length === 0) {
         console.log(`[升级者${creep.name}] 错误: 房间${creep.room.name}没有可用的升级者位置`);
         creep.say('❌ 无位置');
@@ -141,13 +167,13 @@ export class RoleUpgrader {
     // 强制重新计算升级者位置（当建筑布局变化时调用）
     public static recalculateUpgraderPositions(room: Room): void {
       if (!room.controller) return;
-      
+
       // 清除memory中的缓存
       const roomMemory = Memory.rooms[room.name];
       if (roomMemory) {
         delete (roomMemory as any).upgraderPositions;
       }
-      
+
       // 重新计算并缓存
       this.calculateAndCacheUpgraderPositions(room);
     }
@@ -156,7 +182,7 @@ export class RoleUpgrader {
     private static getUpgraderPositions(controllerPos: RoomPosition): string[] {
       const room = Game.rooms[controllerPos.roomName];
       const roomMemory = Memory.rooms[room.name];
-      
+
       // 检查memory中是否有缓存的位置数组
       if (roomMemory && roomMemory.upgraderPositions && roomMemory.upgraderPositions.length > 0) {
         return roomMemory.upgraderPositions;
@@ -234,11 +260,31 @@ export class RoleUpgrader {
           tasks: {}
         };
       }
-      
+
       (Memory.rooms[room.name] as any).upgraderPositions = positionArray;
 
       console.log(`[升级者] 房间${room.name}计算升级者位置: 共${positionArray.length}个可用位置已缓存到memory`);
       return positionArray;
+    }
+
+    // 检查是否能工作（在目标位置且能升级控制器）
+    private static canWork(creep: Creep): boolean {
+      if (!creep.memory.targetId) return false;
+      
+      const [x, y] = creep.memory.targetId.split(',').map(Number);
+      const targetPos = new RoomPosition(x, y, creep.room.name);
+      
+      // 必须在目标位置
+      if (!creep.pos.isEqualTo(targetPos)) return false;
+      
+      // 必须能升级控制器
+      const controller = creep.room.controller;
+      if (!controller || !controller.my) return false;
+      
+      // 必须在升级范围内
+      if (creep.pos.getRangeTo(controller) > 3) return false;
+      
+      return true;
     }
 
     // 检查位置是否适合放置升级者

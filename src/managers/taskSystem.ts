@@ -1,541 +1,399 @@
-// 重构后的任务系统 - 真正的蜂群思维
-// 原则：管理者派发任务 -> 分配给合适的creep -> creep无脑执行
-// 消除所有特殊情况，简化到本质
+// 极简任务系统 - 蜂群思维
+// 管理者派发任务，工人无脑执行
 
-// 任务类型 - 扩展更多需求类型
+// 任务类型 - 兼容历史版本
 export enum TaskType {
-  // 供应类任务（最高优先级）
-  SUPPLY_SPAWN = 'supply_spawn',           // 给spawn供能
-  SUPPLY_EXTENSION = 'supply_extension',   // 给extension供能
-  
-  // 协助类任务（高优先级）
-  ASSIST_HARVESTER = 'assist_harvester',   // 协助静态矿工
-  ASSIST_UPGRADER = 'assist_upgrader',     // 协助静态升级者
-  
-  // 配送类任务（中等优先级）
-  SUPPLY_BUILDER = 'supply_builder',       // 给建筑者供能
-  SUPPLY_UPGRADER = 'supply_upgrader',     // 给升级者供能
-  
-  // 收集类任务（中等优先级）
-  COLLECT_ENERGY = 'collect_energy',       // 收集掉落能量
-  WITHDRAW_ENERGY = 'withdraw_energy',     // 从container/storage取能量
-  
-  // 存储类任务（低优先级）
-  STORE_ENERGY = 'store_energy',           // 存储能量到container/storage
-  
-  // 维护类任务（低优先级）
-  CLEAR_TOMBSTONE = 'clear_tombstone',     // 清理墓碑
-  CLEAR_RUIN = 'clear_ruin'               // 清理废墟
+  ASSIST_HARVESTER = 'assistStaticHarvester',     // 协助静态矿工 - 兼容历史
+  ASSIST_UPGRADER = 'assistStaticUpgrader',       // 协助静态升级者 - 兼容历史
+  SUPPLY_SPAWN = 'supply_spawn',                  // 给spawn供能
+  SUPPLY_EXTENSION = 'supply_extension',          // 给extension供能
+  WITHDRAW_ENERGY = 'withdraw_energy',            // 从container取能量
+  COLLECT_DROPPED = 'collect_dropped'             // 收集掉落能量
 }
 
-// 任务优先级 - 只有3级，简单粗暴
+// 任务优先级
 export enum TaskPriority {
   CRITICAL = 0,    // 关键：矿工支持、spawn供能
-  HIGH = 1,        // 高：extension供能、升级者支持
-  NORMAL = 2       // 正常：其他任务
+  HIGH = 1,        // 高：extension供能
+  NORMAL = 2       // 正常：其他
 }
 
-// 任务接口 - 消除所有不必要的字段
+// 简化任务接口
 export interface Task {
   id: string;
   type: TaskType;
   priority: TaskPriority;
-  roomName: string;
-  createdAt: number;
+  targetId: string;
+  targetPos?: RoomPosition;
   assignedTo?: string;
-
-  // 任务参数 - 统一结构，消除特殊情况
-  targetId?: string;           // 目标ID（creep或structure）
-  targetPos?: RoomPosition;    // 目标位置
-  amount?: number;             // 数量
-  resourceType?: ResourceConstant;
+  status?: string;  // 兼容现有角色代码
+  createdAt: number;
 }
 
-// 任务系统管理器 - 单一职责，只做三件事
+// 蜂群任务系统 - 极简设计
 export class TaskSystem {
-
-  // 主循环：扫描需求，创建任务，分配执行
+  
+  // 主循环：只做三件事
   public static update(room: Room): void {
-    // 紧急简化：大幅减少任务创建频率
-    if (Game.time % 5 === 0) {
-      this.scanAndCreateTasks(room);
-    }
-    
-    this.assignTasksToCreeps(room);
-    
-    // 清理放在最后，减少干扰
-    if (Game.time % 10 === 0) {
-      this.cleanupCompletedTasks(room);
-    }
+    console.log(`[任务系统] 更新房间 ${room.name}`);
+    this.createTasks(room);
+    this.assignTasks(room);
+    this.cleanupTasks(room);
   }
 
-  // 扫描房间需求，创建任务 - 扩展更多需求类型
-  private static scanAndCreateTasks(room: Room): void {
-    // 1. 静态矿工支持 - 最高优先级
-    this.scanHarvesterNeeds(room);
-
-    // 2. Spawn能量供应 - 紧急
-    this.scanSpawnNeeds(room);
-
-    // 3. Extension能量供应
-    this.scanExtensionNeeds(room);
-
-    // 4. 能量流转需求 - 创建智能任务链
-    this.scanEnergyTransferNeeds(room);
-
-    // 5. 收集维护需求 - 掉落能量、墓碑、废墟
-    this.scanMaintenanceNeeds(room);
-
-    // 6. 其他配送需求
-    this.scanOtherNeeds(room);
-  }
-
-  // 扫描矿工需求 - 简化逻辑
-  private static scanHarvesterNeeds(room: Room): void {
-    const staticMiners = room.find(FIND_MY_CREEPS, {
-      filter: c => (c.memory as any).role === 'staticHarvester' &&
-                   (c.memory as any).targetId &&
-                   c.getActiveBodyparts(MOVE) === 0 &&
-                   !(c.memory as any).working
+  // 1. 创建任务 - 只创建真正需要的任务
+  private static createTasks(room: Room): void {
+    
+    // 矿工支持任务 - 最高优先级
+    const idleMiners = room.find(FIND_MY_CREEPS, {
+      filter: c => (c.memory as any).role === 'staticHarvester' && 
+                   !(c.memory as any).working &&
+                   c.getActiveBodyparts(MOVE) === 0
     });
-
-    for (const miner of staticMiners) {
-      if (!this.hasActiveTask(room, TaskType.ASSIST_HARVESTER, miner.id)) {
+    
+    console.log(`[任务系统] 找到 ${idleMiners.length} 个需要搬运的矿工`);
+    
+    for (const miner of idleMiners) {
+      // 检查矿工是否有目标位置
+      if (!(miner.memory as any).targetId) {
+        console.log(`[任务系统] 矿工 ${miner.name} 没有目标位置，跳过`);
+        continue;
+      }
+      
+      if (!this.hasTask(room, TaskType.ASSIST_HARVESTER, miner.id)) {
         const [x, y] = (miner.memory as any).targetId!.split(',').map(Number);
-        this.createTask(room, {
+        const targetPos = new RoomPosition(x, y, room.name);
+        
+        this.createHarvesterTask(room, {
           type: TaskType.ASSIST_HARVESTER,
           priority: TaskPriority.CRITICAL,
-          targetId: miner.id,
-          targetPos: new RoomPosition(x, y, room.name)
+          harvesterId: miner.id,
+          targetPosition: { x: targetPos.x, y: targetPos.y },
+          harvesterPosition: { x: miner.pos.x, y: miner.pos.y }
         });
       }
     }
-  }
-
-  // 扫描Spawn需求
-  private static scanSpawnNeeds(room: Room): void {
-    const spawns = room.find(FIND_MY_SPAWNS, {
+    
+    // 升级者支持任务 - 最高优先级
+    const idleUpgraders = room.find(FIND_MY_CREEPS, {
+      filter: c => (c.memory as any).role === 'upgrader' && 
+                   !(c.memory as any).working &&
+                   c.getActiveBodyparts(MOVE) === 0
+    });
+    
+    console.log(`[任务系统] 找到 ${idleUpgraders.length} 个需要搬运的升级者`);
+    
+    for (const upgrader of idleUpgraders) {
+      // 检查升级者是否有目标位置
+      if (!(upgrader.memory as any).targetId) {
+        console.log(`[任务系统] 升级者 ${upgrader.name} 没有目标位置，跳过`);
+        continue;
+      }
+      
+      if (!this.hasTask(room, TaskType.ASSIST_UPGRADER, upgrader.id)) {
+        const [x, y] = (upgrader.memory as any).targetId!.split(',').map(Number);
+        const targetPos = new RoomPosition(x, y, room.name);
+        
+        this.createUpgraderTask(room, {
+          type: TaskType.ASSIST_UPGRADER,
+          priority: TaskPriority.CRITICAL,
+          upgraderId: upgrader.id,
+          targetPosition: { x: targetPos.x, y: targetPos.y },
+          upgraderPosition: { x: upgrader.pos.x, y: upgrader.pos.y }
+        });
+      }
+    }
+    
+    // spawn供能任务
+    const emptySpawns = room.find(FIND_MY_SPAWNS, {
       filter: s => s.store.getFreeCapacity(RESOURCE_ENERGY) > 0
     });
-
-    for (const spawn of spawns) {
-      if (!this.hasActiveTask(room, TaskType.SUPPLY_SPAWN, spawn.id)) {
+    
+    for (const spawn of emptySpawns) {
+      if (!this.hasTask(room, TaskType.SUPPLY_SPAWN, spawn.id)) {
         this.createTask(room, {
           type: TaskType.SUPPLY_SPAWN,
           priority: TaskPriority.CRITICAL,
           targetId: spawn.id,
-          targetPos: spawn.pos,
-          amount: spawn.store.getFreeCapacity(RESOURCE_ENERGY),
-          resourceType: RESOURCE_ENERGY
+          targetPos: spawn.pos
         });
       }
     }
-  }
-
-  // 扫描Extension需求
-  private static scanExtensionNeeds(room: Room): void {
-    const extensions = room.find(FIND_MY_STRUCTURES, {
-      filter: s => s.structureType === STRUCTURE_EXTENSION &&
-                   s.store.getFreeCapacity(RESOURCE_ENERGY) > 0
-    }) as StructureExtension[];
-
-    for (const extension of extensions) {
-      if (!this.hasActiveTask(room, TaskType.SUPPLY_EXTENSION, extension.id)) {
-        this.createTask(room, {
-          type: TaskType.SUPPLY_EXTENSION,
-          priority: TaskPriority.HIGH,
-          targetId: extension.id,
-          targetPos: extension.pos,
-          amount: extension.store.getFreeCapacity(RESOURCE_ENERGY),
-          resourceType: RESOURCE_ENERGY
-        });
+    
+    // extension供能任务 - 只有当有足够能量的搬运工时
+    if (this.hasEnergyCarriers(room)) {
+      const emptyExtensions = room.find(FIND_MY_STRUCTURES, {
+        filter: s => s.structureType === STRUCTURE_EXTENSION &&
+                     (s as StructureExtension).store.getFreeCapacity(RESOURCE_ENERGY) > 0
+      });
+      
+      for (const ext of emptyExtensions.slice(0, 5)) { // 限制数量
+        if (!this.hasTask(room, TaskType.SUPPLY_EXTENSION, ext.id)) {
+          this.createTask(room, {
+            type: TaskType.SUPPLY_EXTENSION,
+            priority: TaskPriority.HIGH,
+            targetId: ext.id,
+            targetPos: ext.pos
+          });
+        }
       }
     }
-  }
-
-  // 扫描其他需求
-  private static scanOtherNeeds(room: Room): void {
-    // 静态升级者支持 - 修复条件：只要是静态upgrader且不在工作位置就需要搬运
-    const staticUpgraders = room.find(FIND_MY_CREEPS, {
-      filter: c => (c.memory as any).role === 'upgrader' &&
-                   (c.memory as any).targetId &&
-                   c.getActiveBodyparts(MOVE) === 0 &&
-                   !(c.memory as any).working  // 还没开始工作就需要搬运
-    });
-
-    for (const upgrader of staticUpgraders) {
-      if (!this.findTask(room, TaskType.ASSIST_UPGRADER, upgrader.id)) {
-        const [x, y] = (upgrader.memory as any).targetId!.split(',').map(Number);
-        this.createTask(room, {
-          type: TaskType.ASSIST_UPGRADER,
-          priority: TaskPriority.HIGH,
-          targetId: upgrader.id,
-          targetPos: new RoomPosition(x, y, room.name)
-        });
-      }
-    }
-
-    // 建筑者供能
-    const builders = room.find(FIND_MY_CREEPS, {
-      filter: c => (c.memory as any).role === 'builder' &&
-                   c.store.getFreeCapacity(RESOURCE_ENERGY) > 0 &&
-                   (c.memory as any).requestEnergy === true
-    });
-
-    for (const builder of builders) {
-      if (!this.findTask(room, TaskType.SUPPLY_BUILDER, builder.id)) {
-        this.createTask(room, {
-          type: TaskType.SUPPLY_BUILDER,
-          priority: TaskPriority.NORMAL,
-          targetId: builder.id,
-          targetPos: builder.pos
-        });
-      }
-    }
-  }
-
-  // 扫描能量流转需求 - 智能任务链
-  private static scanEnergyTransferNeeds(room: Room): void {
-    // 获取当前有能量需求但搬运工没有能量的情况
-    const carriersWithoutEnergy = room.find(FIND_MY_CREEPS, {
+    
+    // 取能量任务 - 为空手搬运工创建
+    const emptyCarriers = room.find(FIND_MY_CREEPS, {
       filter: c => (c.memory as any).role === 'carrier' &&
                    c.store.getUsedCapacity(RESOURCE_ENERGY) === 0 &&
                    !(c.memory as any).currentTaskId
     });
-
-    if (carriersWithoutEnergy.length === 0) return;
-
-    // 查找可用的能量源（优先级：container > storage > tombstone）
-    const energySources = room.find(FIND_STRUCTURES, {
-      filter: s => (s.structureType === STRUCTURE_CONTAINER ||
-                   s.structureType === STRUCTURE_STORAGE) &&
-                   s.store.getUsedCapacity(RESOURCE_ENERGY) > 100
-    });
-
-    // 为每个没能量的搬运工创建取能量任务
-    for (const carrier of carriersWithoutEnergy.slice(0, energySources.length)) {
-      const source = carrier.pos.findClosestByPath(energySources);
-      if (source && !this.findTask(room, TaskType.WITHDRAW_ENERGY, source.id)) {
-        this.createTask(room, {
-          type: TaskType.WITHDRAW_ENERGY,
-          priority: TaskPriority.HIGH,
-          targetId: source.id,
-          targetPos: source.pos
-        });
+    
+    if (emptyCarriers.length > 0) {
+      const energySources = room.find(FIND_STRUCTURES, {
+        filter: s => (s.structureType === STRUCTURE_CONTAINER || s.structureType === STRUCTURE_STORAGE) &&
+                     (s as any).store.getUsedCapacity(RESOURCE_ENERGY) > 100
+      });
+      
+      for (let i = 0; i < Math.min(emptyCarriers.length, energySources.length); i++) {
+        const source = energySources[i];
+        if (!this.hasTask(room, TaskType.WITHDRAW_ENERGY, source.id)) {
+          this.createTask(room, {
+            type: TaskType.WITHDRAW_ENERGY,
+            priority: TaskPriority.CRITICAL,
+            targetId: source.id,
+            targetPos: source.pos
+          });
+        }
       }
     }
-  }
-
-  // 扫描维护需求 - 掉落能量、墓碑、废墟
-  private static scanMaintenanceNeeds(room: Room): void {
-    // 1. 扫描大量掉落能量（>200）
+    
+    // 收集掉落能量
     const droppedEnergy = room.find(FIND_DROPPED_RESOURCES, {
-      filter: r => r.resourceType === RESOURCE_ENERGY && r.amount > 200
+      filter: r => r.resourceType === RESOURCE_ENERGY && r.amount > 50
     });
-
-    for (const resource of droppedEnergy) {
-      if (!this.findTask(room, TaskType.COLLECT_ENERGY, resource.id)) {
+    
+    for (const resource of droppedEnergy.slice(0, 2)) {
+      if (!this.hasTask(room, TaskType.COLLECT_DROPPED, resource.id)) {
         this.createTask(room, {
-          type: TaskType.COLLECT_ENERGY,
+          type: TaskType.COLLECT_DROPPED,
           priority: TaskPriority.NORMAL,
           targetId: resource.id,
-          targetPos: resource.pos,
-          amount: resource.amount
-        });
-      }
-    }
-
-    // 2. 扫描墓碑
-    const tombstones = room.find(FIND_TOMBSTONES, {
-      filter: t => t.store.getUsedCapacity(RESOURCE_ENERGY) > 0
-    });
-
-    for (const tombstone of tombstones) {
-      if (!this.findTask(room, TaskType.CLEAR_TOMBSTONE, tombstone.id)) {
-        this.createTask(room, {
-          type: TaskType.CLEAR_TOMBSTONE,
-          priority: TaskPriority.NORMAL,
-          targetId: tombstone.id,
-          targetPos: tombstone.pos
-        });
-      }
-    }
-
-    // 3. 扫描废墟
-    const ruins = room.find(FIND_RUINS, {
-      filter: r => r.store.getUsedCapacity(RESOURCE_ENERGY) > 0
-    });
-
-    for (const ruin of ruins) {
-      if (!this.findTask(room, TaskType.CLEAR_RUIN, ruin.id)) {
-        this.createTask(room, {
-          type: TaskType.CLEAR_RUIN,
-          priority: TaskPriority.NORMAL,
-          targetId: ruin.id,
-          targetPos: ruin.pos
-        });
-      }
-    }
-
-    // 4. 扫描存储需求（背包满了的搬运工需要存储）
-    const carriersNeedingStorage = room.find(FIND_MY_CREEPS, {
-      filter: c => (c.memory as any).role === 'carrier' &&
-                   c.store.getFreeCapacity(RESOURCE_ENERGY) === 0 &&
-                   c.store.getUsedCapacity(RESOURCE_ENERGY) > 0 &&
-                   !(c.memory as any).currentTaskId
-    });
-
-    const storageTargets = room.find(FIND_STRUCTURES, {
-      filter: s => (s.structureType === STRUCTURE_CONTAINER ||
-                   s.structureType === STRUCTURE_STORAGE) &&
-                   s.store.getFreeCapacity(RESOURCE_ENERGY) > 0
-    });
-
-    for (const carrier of carriersNeedingStorage) {
-      const target = carrier.pos.findClosestByPath(storageTargets);
-      if (target && !this.findTask(room, TaskType.STORE_ENERGY, target.id)) {
-        this.createTask(room, {
-          type: TaskType.STORE_ENERGY,
-          priority: TaskPriority.NORMAL,
-          targetId: target.id,
-          targetPos: target.pos
+          targetPos: resource.pos
         });
       }
     }
   }
 
-  // 分配任务给creep - 简化逻辑，消除抢占
-  private static assignTasksToCreeps(room: Room): void {
+  // 2. 分配任务 - 简单粗暴
+  private static assignTasks(room: Room): void {
     const roomMemory = this.getRoomMemory(room);
-
-    // 获取所有搬运工
+    const tasks = (roomMemory as any).tasks || {};
+    
+    // 获取空闲搬运工
     const carriers = room.find(FIND_MY_CREEPS, {
       filter: c => (c.memory as any).role === 'carrier'
     });
-
-    if (carriers.length === 0) {
-      console.log(`[任务分配] 房间 ${room.name} 没有搬运工`);
-      return;
-    }
-
-    // 获取待分配任务，按优先级排序
-    const pendingTasks = Object.values((roomMemory as any).tasks || {})
-      .filter((task: any) => !task.assignedTo)
-      .sort((a: any, b: any) => a.priority - b.priority) as Task[];
     
-    console.log(`[任务分配] 房间 ${room.name}: ${carriers.length}个搬运工, ${pendingTasks.length}个待分配任务`);
-
-    // 获取空闲搬运工（包括任务已完成/无效的carrier）
-    const availableCarriers = carriers.filter(c => {
-      const taskId = (c.memory as any).currentTaskId;
-      if (!taskId) return true; // 没有任务ID的是空闲的
-      
-      // 检查任务是否存在
-      const task = (roomMemory as any).tasks?.[taskId];
-      if (!task) {
-        // 任务不存在，清理任务ID，标记为空闲
-        console.log(`[任务分配] ${c.name} 的任务 ${taskId} 不存在，清理并标记为空闲`);
-        delete (c.memory as any).currentTaskId;
-        return true;
-      }
-      
-      return false; // 有有效任务的不是空闲的
-    });
-
-    // 按优先级分配任务
+    const freeCarriers = carriers.filter(c => !(c.memory as any).currentTaskId);
+    
+    console.log(`[任务系统] 房间 ${room.name}: ${carriers.length} 个搬运工, ${freeCarriers.length} 个空闲, ${Object.keys(tasks).length} 个任务`);
+    
+    // 获取未分配任务，按优先级排序 - 兼容历史版本字符串优先级
+    const pendingTasks = Object.values(tasks)
+      .filter((task: any) => !task.assignedTo)
+      .sort((a: any, b: any) => {
+        // 兼容历史版本的字符串优先级
+        const priorityOrder: { [key: string]: number } = {
+          'urgent': 0,
+          'high': 1,
+          'normal': 2,
+          'low': 3
+        };
+        
+        const aPriority = typeof a.priority === 'string' ? priorityOrder[a.priority] : a.priority;
+        const bPriority = typeof b.priority === 'string' ? priorityOrder[b.priority] : b.priority;
+        
+        return aPriority - bPriority;
+      });
+    
+    // 分配任务
     for (const task of pendingTasks) {
-      if (availableCarriers.length === 0) break;
-
-      const carrier = this.findBestCarrierForTask(availableCarriers, task);
-      if (carrier) {
-        this.assignTaskToCreep(room, task, carrier);
-        const index = availableCarriers.indexOf(carrier);
-        availableCarriers.splice(index, 1);
+      if (freeCarriers.length === 0) break;
+      
+      // 根据任务类型选择合适的搬运工
+      let suitableCarrier = null;
+      
+      if ([TaskType.SUPPLY_SPAWN, TaskType.SUPPLY_EXTENSION].includes((task as any).type)) {
+        // 需要能量的任务
+        suitableCarrier = freeCarriers.find(c => c.store.getUsedCapacity(RESOURCE_ENERGY) > 0);
+      } else if ([TaskType.WITHDRAW_ENERGY, TaskType.COLLECT_DROPPED].includes((task as any).type)) {
+        // 获取能量的任务
+        suitableCarrier = freeCarriers.find(c => c.store.getUsedCapacity(RESOURCE_ENERGY) === 0);
+      } else if ([TaskType.ASSIST_HARVESTER, TaskType.ASSIST_UPGRADER].includes((task as any).type)) {
+        // 搬运任务不需要能量，任何搬运工都可以
+        suitableCarrier = freeCarriers[0];
+      }
+      
+      if (!suitableCarrier) {
+        suitableCarrier = freeCarriers[0]; // 没有合适的就用第一个
+      }
+      
+      if (suitableCarrier) {
+        // 分配任务
+        (task as any).assignedTo = suitableCarrier.id;
+        (task as any).status = 'assigned';  // 兼容现有角色代码
+        (suitableCarrier.memory as any).currentTaskId = (task as any).id;
+        (roomMemory as any).tasks[(task as any).id] = task;
+        
+        // 从空闲列表移除
+        const index = freeCarriers.indexOf(suitableCarrier);
+        freeCarriers.splice(index, 1);
+        
+        console.log(`[任务系统] ${suitableCarrier.name} <- ${(task as any).type}`);
       }
     }
   }
 
-  // 为任务找到最合适的搬运工 - 简单距离算法
-  private static findBestCarrierForTask(carriers: Creep[], task: Task): Creep | null {
-    if (carriers.length === 0) return null;
-    if (!task.targetPos) return carriers[0];
-
-    let bestCarrier = carriers[0];
-    let bestDistance = bestCarrier.pos.getRangeTo(task.targetPos);
-
-    for (let i = 1; i < carriers.length; i++) {
-      const carrier = carriers[i];
-      const distance = carrier.pos.getRangeTo(task.targetPos);
-      if (distance < bestDistance) {
-        bestDistance = distance;
-        bestCarrier = carrier;
-      }
-    }
-
-    return bestCarrier;
-  }
-
-  // 分配任务给creep - 简化逻辑
-  private static assignTaskToCreep(room: Room, task: Task, creep: Creep): void {
-    const roomMemory = this.getRoomMemory(room);
-
-    // 更新任务
-    task.assignedTo = creep.id;
-    (roomMemory as any).tasks![task.id] = task;
-
-    // 更新creep内存
-    (creep.memory as any).currentTaskId = task.id;
-
-    console.log(`[任务系统] 分配任务 ${task.type} 给 ${creep.name}`);
-  }
-
-  // 创建任务 - 简化逻辑
-  private static createTask(room: Room, taskData: Partial<Task>): string {
-    const roomMemory = this.getRoomMemory(room);
-    const taskId = `${taskData.type}_${Game.time}_${Math.random().toString(36).substr(2, 9)}`;
-
-    const task: Task = {
-      id: taskId,
-      type: taskData.type!,
-      priority: taskData.priority!,
-      roomName: room.name,
-      createdAt: Game.time,
-      ...taskData
-    };
-
-    (roomMemory as any).tasks![taskId] = task;
-    return taskId;
-  }
-
-  // 查找现有任务 - 简化逻辑
-  private static findTask(room: Room, type: TaskType, targetId: string): Task | null {
+  // 3. 清理任务 - 删除无效任务，兼容历史版本
+  private static cleanupTasks(room: Room): void {
     const roomMemory = this.getRoomMemory(room);
     const tasks = (roomMemory as any).tasks || {};
+    
+    for (const [taskId, task] of Object.entries(tasks)) {
+      const t = task as any;
+      let shouldDelete = false;
+      
+      // 兼容历史版本的任务完成检查
+      if (t.type === 'assistStaticHarvester') {
+        const harvester = Game.getObjectById(t.harvesterId) as Creep;
+        if (!harvester || (harvester.memory as any).working === true) {
+          shouldDelete = true;
+        }
+      } else if (t.type === 'assistStaticUpgrader') {
+        const upgrader = Game.getObjectById(t.upgraderId) as Creep;
+        if (!upgrader || (upgrader.memory as any).working === true) {
+          shouldDelete = true;
+        }
+      } else {
+        // 其他任务类型的清理
+        if (t.targetId && !Game.getObjectById(t.targetId)) {
+          shouldDelete = true;
+        }
+      }
+      
+      // 分配的搬运工死亡
+      if (t.assignedTo && !Game.getObjectById(t.assignedTo)) {
+        shouldDelete = true;
+      }
+      
+      // 任务过期
+      if (Game.time - t.createdAt > 500) {
+        shouldDelete = true;
+      }
+      
+      if (shouldDelete) {
+        delete (roomMemory as any).tasks[taskId];
+      }
+    }
+  }
 
-    return (Object.values(tasks) as Task[])
-      .find(task => task.type === type && task.targetId === targetId) || null;
+  // 辅助方法 - 兼容历史版本字段
+  private static hasTask(room: Room, type: TaskType, targetId: string): boolean {
+    const roomMemory = this.getRoomMemory(room);
+    const tasks = (roomMemory as any).tasks || {};
+    
+    return Object.values(tasks).some((task: any) => {
+      if (task.type === type) {
+        // 兼容历史版本的字段名
+        if (type === TaskType.ASSIST_HARVESTER) {
+          return task.harvesterId === targetId;
+        } else if (type === TaskType.ASSIST_UPGRADER) {
+          return task.upgraderId === targetId;
+        } else {
+          return task.targetId === targetId;
+        }
+      }
+      return false;
+    });
   }
   
-  // 增强版：检查是否有活跃任务（目标仍然存在且需要）
-  private static hasActiveTask(room: Room, type: TaskType, targetId: string): boolean {
-    const existingTask = this.findTask(room, type, targetId);
-    if (!existingTask) return false;
-    
-    // 验证目标是否仍然存在且需要服务
-    const target = Game.getObjectById(targetId);
-    if (!target) return false;
-    
-    // 针对不同任务类型进行特定检查
-    if (type === TaskType.ASSIST_HARVESTER) {
-      const creep = target as Creep;
-      return creep && !(creep.memory as any).working;
-    }
-    
-    if ([TaskType.SUPPLY_SPAWN, TaskType.SUPPLY_EXTENSION].includes(type)) {
-      const structure = target as StructureSpawn | StructureExtension;
-      return structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0;
-    }
-    
-    return true; // 其他类型暂时简单返回true
+  private static hasEnergyCarriers(room: Room): boolean {
+    const carriers = room.find(FIND_MY_CREEPS, {
+      filter: c => (c.memory as any).role === 'carrier' &&
+                   c.store.getUsedCapacity(RESOURCE_ENERGY) > 0
+    });
+    return carriers.length >= 1;
   }
 
-  // 清理完成任务 - 增强逻辑
-  private static cleanupCompletedTasks(room: Room): void {
+  // 创建矿工任务 - 兼容历史版本结构
+  private static createHarvesterTask(room: Room, data: any): void {
     const roomMemory = this.getRoomMemory(room);
-    const tasksToDelete: string[] = [];
-
-    for (const [taskId, task] of Object.entries((roomMemory as any).tasks || {})) {
-      const typedTask = task as Task;
-      let shouldDelete = false;
-
-      // 1. 删除分配给已死亡creep的任务
-      if (typedTask.assignedTo && !Game.creeps[typedTask.assignedTo]) {
-        shouldDelete = true;
-        console.log(`[任务清理] 删除死亡creep ${typedTask.assignedTo} 的任务 ${taskId}`);
-      }
-
-      // 2. 删除过期任务（超过1000tick的任务）
-      if (Game.time - typedTask.createdAt > 1000) {
-        shouldDelete = true;
-        console.log(`[任务清理] 删除过期任务 ${taskId} (${Game.time - typedTask.createdAt}tick前创建)`);
-      }
-
-      // 3. 删除目标不存在的任务
-      if (typedTask.targetId && !Game.getObjectById(typedTask.targetId)) {
-        // 所有任务都检查目标是否存在
-        shouldDelete = true;
-        console.log(`[任务清理] 删除目标不存在的任务 ${taskId} (目标: ${typedTask.targetId})`);
-      }
-      
-      // 4. 特殊检查：协助类任务的目标creep状态
-      if ([TaskType.ASSIST_HARVESTER, TaskType.ASSIST_UPGRADER].includes(typedTask.type) && typedTask.targetId) {
-        const targetCreep = Game.getObjectById(typedTask.targetId);
-        if (targetCreep) {
-          // 检查目标creep是否还需要协助
-          const creep = targetCreep as Creep;
-          
-          // 如果目标creep已经在工作位置（working=true），任务完成
-          if ((creep.memory as any).working) {
-            shouldDelete = true;
-            console.log(`[任务清理] 目标creep ${creep.name} 已在工作位置，删除协助任务 ${taskId}`);
-          }
-          
-          // 如果目标creep即将死亡（剩余生命<50），取消任务
-          if (creep.ticksToLive && creep.ticksToLive < 50) {
-            shouldDelete = true;
-            console.log(`[任务清理] 目标creep ${creep.name} 即将死亡，删除协助任务 ${taskId}`);
-          }
-        }
-      }
-      
-      // 5. 供应类任务的特殊检查
-      if ([TaskType.SUPPLY_SPAWN, TaskType.SUPPLY_EXTENSION].includes(typedTask.type) && typedTask.targetId) {
-        const target = Game.getObjectById(typedTask.targetId);
-        if (target) {
-          // 检查目标结构是否还需要能量
-          const structure = target as StructureSpawn | StructureExtension;
-          if (structure.store.getFreeCapacity(RESOURCE_ENERGY) === 0) {
-            shouldDelete = true;
-            console.log(`[任务清理] 目标结构 ${structure.id} 已满，删除供应任务 ${taskId}`);
-          }
-        }
-      }
-      
-      // 6. 配送类任务的特殊检查
-      if ([TaskType.SUPPLY_BUILDER, TaskType.SUPPLY_UPGRADER].includes(typedTask.type) && typedTask.targetId) {
-        const targetCreep = Game.getObjectById(typedTask.targetId);
-        if (targetCreep) {
-          const creep = targetCreep as Creep;
-          // 检查目标creep是否还需要能量
-          if (creep.store.getFreeCapacity(RESOURCE_ENERGY) === 0) {
-            shouldDelete = true;
-            console.log(`[任务清理] 目标creep ${creep.name} 能量已满，删除配送任务 ${taskId}`);
-          }
-          
-          // 检查是否还有请求标记
-          if (typedTask.type === TaskType.SUPPLY_BUILDER && !(creep.memory as any).requestEnergy) {
-            shouldDelete = true;
-            console.log(`[任务清理] 建筑者 ${creep.name} 不再请求能量，删除配送任务 ${taskId}`);
-          }
-        }
-      }
-
-      if (shouldDelete) {
-        tasksToDelete.push(taskId);
-      }
-    }
-
-    // 删除无效任务
-    for (const taskId of tasksToDelete) {
-      delete (roomMemory as any).tasks![taskId];
-    }
-
-    if (tasksToDelete.length > 0) {
-      console.log(`[任务清理] 房间 ${room.name} 清理了 ${tasksToDelete.length} 个无效任务`);
-    }
+    const taskId = `${room.name}_transport_${data.harvesterId}`;
+    
+    const task = {
+      id: taskId,
+      type: data.type,
+      priority: 'urgent',
+      status: 'pending',
+      roomName: room.name,
+      createdAt: Game.time,
+      expiresAt: Game.time + 200,
+      harvesterId: data.harvesterId,
+      targetPosition: data.targetPosition,
+      harvesterPosition: data.harvesterPosition,
+      assignedTo: null,
+      assignedAt: null,
+      completedAt: null,
+      errorMessage: null
+    };
+    
+    (roomMemory as any).tasks[taskId] = task;
+    console.log(`[任务系统] 创建矿工任务: ${taskId} 目标:${data.harvesterId}`);
   }
 
-  // 获取房间内存 - 简化结构
+  // 创建升级者任务 - 兼容历史版本结构
+  private static createUpgraderTask(room: Room, data: any): void {
+    const roomMemory = this.getRoomMemory(room);
+    const taskId = `${room.name}_upgrader_transport_${data.upgraderId}`;
+    
+    const task = {
+      id: taskId,
+      type: data.type,
+      priority: 'urgent',
+      status: 'pending',
+      roomName: room.name,
+      createdAt: Game.time,
+      expiresAt: Game.time + 200,
+      upgraderId: data.upgraderId,
+      targetPosition: data.targetPosition,
+      upgraderPosition: data.upgraderPosition,
+      assignedTo: null,
+      assignedAt: null,
+      completedAt: null,
+      errorMessage: null
+    };
+    
+    (roomMemory as any).tasks[taskId] = task;
+    console.log(`[任务系统] 创建升级者任务: ${taskId} 目标:${data.upgraderId}`);
+  }
+
+  private static createTask(room: Room, data: Partial<Task>): void {
+    const roomMemory = this.getRoomMemory(room);
+    const taskId = `${data.type}_${Game.time}_${Math.random().toString(36).substr(2, 5)}`;
+    
+    const task: Task = {
+      id: taskId,
+      type: data.type!,
+      priority: data.priority!,
+      targetId: data.targetId!,
+      createdAt: Game.time
+    };
+    
+    if (data.targetPos) {
+      task.targetPos = data.targetPos;
+    }
+    
+    (roomMemory as any).tasks[taskId] = task;
+  }
+
   private static getRoomMemory(room: Room): any {
     if (!Memory.rooms[room.name]) {
       Memory.rooms[room.name] = {
@@ -548,58 +406,59 @@ export class TaskSystem {
         tasks: {}
       };
     }
-
+    
     if (!(Memory.rooms[room.name] as any).tasks) {
       (Memory.rooms[room.name] as any).tasks = {};
     }
-
+    
     return Memory.rooms[room.name];
   }
 
-  // 公开方法：获取creep的当前任务
+  // 公共API
   public static getCreepTask(creep: Creep): Task | null {
-    if (!(creep.memory as any).currentTaskId) return null;
-
-    const roomMemory = this.getRoomMemory(creep.room);
-    const task = (roomMemory as any).tasks?.[(creep.memory as any).currentTaskId];
+    const taskId = (creep.memory as any).currentTaskId;
+    if (!taskId) return null;
     
-    // 如果任务不存在，清理creep的任务ID
+    const roomMemory = this.getRoomMemory(creep.room);
+    const task = (roomMemory as any).tasks[taskId];
+    
     if (!task) {
-      console.log(`[任务系统] ${creep.name} 的任务 ${(creep.memory as any).currentTaskId} 不存在，清理任务ID`);
+      // 任务不存在，清理creep的任务ID
       delete (creep.memory as any).currentTaskId;
       return null;
+    }
+    
+    // 如果任务存在且状态是assigned，标记为执行中
+    if (task.status === 'assigned') {
+      task.status = 'IN_PROGRESS';
+      (roomMemory as any).tasks[taskId] = task;
     }
     
     return task;
   }
 
-  // 公开方法：完成任务
   public static completeTask(creep: Creep): void {
-    if (!(creep.memory as any).currentTaskId) return;
-
+    const taskId = (creep.memory as any).currentTaskId;
+    if (!taskId) return;
+    
     const roomMemory = this.getRoomMemory(creep.room);
-    const task = (roomMemory as any).tasks?.[(creep.memory as any).currentTaskId];
-
-    if (task) {
-      delete (roomMemory as any).tasks![task.id];
-    }
-
+    delete (roomMemory as any).tasks[taskId];
     delete (creep.memory as any).currentTaskId;
+    
     console.log(`[任务系统] ${creep.name} 完成任务`);
   }
-
-  // 调试方法：显示房间任务状态
+  
+  // 调试方法
   public static debugRoomTasks(room: Room): void {
     const roomMemory = this.getRoomMemory(room);
     const tasks = (roomMemory as any).tasks || {};
-
-    console.log(`[任务系统] 房间 ${room.name} 任务状态:`);
-    console.log(`  总任务数: ${Object.keys(tasks).length}`);
-
+    const taskCount = Object.keys(tasks).length;
+    
+    console.log(`[任务系统] 房间 ${room.name}: ${taskCount} 个任务`);
+    
     for (const task of Object.values(tasks) as Task[]) {
-      const status = task.assignedTo ? '已分配' : '待分配';
-      const carrier = task.assignedTo ? Game.creeps[task.assignedTo]?.name : '无';
-      console.log(`  ${task.type} (优先级:${task.priority}) - ${status} - ${carrier}`);
+      const assignee = task.assignedTo ? Game.creeps[task.assignedTo]?.name || '已死亡' : '待分配';
+      console.log(`  ${task.type} -> ${assignee}`);
     }
   }
 }

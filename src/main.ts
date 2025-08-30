@@ -10,6 +10,7 @@ import { CarrierDiagnostics } from "./utils/carrierDiagnostics";
 // 导入任务系统调试工具
 import { TaskDebug } from "./utils/taskDebug";
 
+
 // 导入战斗相关角色（用于跨房间处理）
 import { RoleTank } from "./roles/tank";
 import { RoleWarrior } from "./roles/warrior";
@@ -27,19 +28,23 @@ declare global {
   var clearMoveCache: typeof ConsoleCommands.clearMoveCache;
   var clearAllTankCache: typeof ConsoleCommands.clearAllTankCache;
   var checkRoomConnection: typeof ConsoleCommands.checkRoomConnection;
+  var checkStaticWorkers: typeof ConsoleCommands.checkStaticWorkers;
+  var diagnosePull: typeof ConsoleCommands.diagnosePull;
 
 
   // 搬运工诊断命令
   var diagnoseCarriers: typeof CarrierDiagnostics.fullDiagnosis;
   var analyzeCarrier: typeof CarrierDiagnostics.analyzeCarrierDetailed;
   var forceAssignTasks: typeof CarrierDiagnostics.forceTaskReassignment;
-  
+
   // 任务系统调试命令
   var showTasks: typeof TaskDebug.showAllTasks;
   var clearTasks: typeof TaskDebug.clearAllTasks;
   var testComplete: typeof TaskDebug.testTaskCompletion;
   var checkExtensions: typeof TaskDebug.checkExtensions;
   var diagnoseCarrierTasks: typeof TaskDebug.diagnoseCrackCarriers;
+  var diagnoseSupplyLoop: typeof ConsoleCommands.diagnoseSupplyLoop;
+  var fixStuckSupplyTasks: typeof ConsoleCommands.fixStuckSupplyTasks;
 }
 
 // 暴露简化的控制台命令到全局
@@ -51,6 +56,8 @@ global.help = ConsoleCommands.help;
 global.clearMoveCache = ConsoleCommands.clearMoveCache;
 global.clearAllTankCache = ConsoleCommands.clearAllTankCache;
 global.checkRoomConnection = ConsoleCommands.checkRoomConnection;
+global.checkStaticWorkers = ConsoleCommands.checkStaticWorkers;
+global.diagnosePull = ConsoleCommands.diagnosePull;
 
 
 // 暴露搬运工诊断命令
@@ -64,6 +71,8 @@ global.clearTasks = TaskDebug.clearAllTasks;
 global.testComplete = TaskDebug.testTaskCompletion;
 global.checkExtensions = TaskDebug.checkExtensions;
 global.diagnoseCarrierTasks = TaskDebug.diagnoseCrackCarriers;
+global.diagnoseSupplyLoop = ConsoleCommands.diagnoseSupplyLoop;
+global.fixStuckSupplyTasks = ConsoleCommands.fixStuckSupplyTasks;
 
 // 简化的内联函数实现
 function cleanupDeadCreeps(): void {

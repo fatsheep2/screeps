@@ -123,8 +123,11 @@ function getAdvancedSpawnPriorities(_room: Room, creepCounts: Record<string, num
   const priorities: string[] = [];
 
   // 搬运工优先级最高，确保有足够的搬运工
-  if (creepCounts.carrier < 2) {
+  // 提高搬运工生产上限以应对大量搬运任务
+  const maxCarriers = Math.min(ROLE_LIMITS.carrier, 4); // 允许最多4个搬运工
+  if (creepCounts.carrier < maxCarriers) {
     priorities.push('carrier');
+    console.log(`[生产管理] 搬运工不足: 当前${creepCounts.carrier}, 需要${maxCarriers}`);
   }
 
   // 然后优先补满静态矿工

@@ -53,21 +53,56 @@ export class RoleStaticHarvester {
 
     if (!existingTask) {
       // 没有任务，等待房间管理器创建
+      creep.say('⏳ 等待任务');
       return;
     }
 
     // 已有任务，显示状态
 
 
-    // 如果任务已分配，检查搬运工是否在身边
-    if (existingTask.assignedTo && (existingTask.status === 'assigned' || existingTask.status === 'in_progress')) {
-      const assignedCarrier = Game.getObjectById(existingTask.assignedTo) as Creep;
-      if (assignedCarrier && creep.pos.isNearTo(assignedCarrier.pos)) {
-        // 搬运工在身边，矿工配合pull操作
-        const moveResult = creep.move(assignedCarrier);
-        if (moveResult === OK) {
-        }
+        // 如果任务正在进行中，检查搬运工是否在身边并配合移动
+    if (existingTask.assignedTo && existingTask.status === 'IN_PROGRESS') {
+      // assignedTo存储的是creep.id，用ID查找
+      let carrier = Game.getObjectById(existingTask.assignedTo) as Creep;
+
+      if (!carrier) {
+        // 如果ID查找失败，尝试按名字查找（兼容旧数据）
+        carrier = Game.creeps[existingTask.assignedTo];
       }
+
+      if (!carrier) {
+        // 搬运工已死亡，立即重置自己的状态
+        (creep.memory as any).working = false;
+        creep.say('💀 搬运工死亡');
+        console.log(`[静态矿工] ${creep.name} 的搬运工已死亡，重置工作状态`);
+        return;
+      }
+
+      if (carrier && creep.pos.isNearTo(carrier.pos)) {
+        // 检查自己是否已经能够工作（在目标位置且能挖矿）
+        if (this.canWork(creep)) {
+          // 能工作了，设置working状态，任务系统会检测并完成任务
+          creep.memory.working = true;
+          creep.say('⛏️ 开工');
+          console.log(`[静态矿工] ${creep.name} 到达工作位置`);
+          return;
+        }
+        
+        // 还不能工作，继续配合搬运工
+        // 标准Screeps pull机制：被拉拽者必须 move(搬运工)
+        const moveResult = creep.move(carrier);
+        if (moveResult === OK) {
+          creep.say('🤝 配合');
+        } else {
+          creep.say(`🔄 配合(${moveResult})`);
+        }
+      } else if (carrier) {
+        // 搬运工存在但不在身边，等待
+        creep.say('⏳ 等待');
+      }
+    } else if (existingTask.assignedTo && existingTask.status === 'assigned') {
+      // 任务已分配但未开始执行
+      creep.say('📋 已派工');
     }
   }
 
@@ -159,6 +194,27 @@ export class RoleStaticHarvester {
     } catch (error) {
       delete creep.memory.targetId;
     }
+  }
+
+  // 检查是否能工作（在目标位置且能挖矿）
+  private static canWork(creep: Creep): boolean {
+    if (!creep.memory.targetId) return false;
+    
+    const [x, y] = creep.memory.targetId.split(',').map(Number);
+    const targetPos = new RoomPosition(x, y, creep.room.name);
+    
+    // 必须在目标位置
+    if (!creep.pos.isEqualTo(targetPos)) return false;
+    
+    // 必须能找到可挖的能量源
+    const sources = creep.room.find(FIND_SOURCES_ACTIVE);
+    const nearestSource = creep.pos.findClosestByRange(sources);
+    if (!nearestSource) return false;
+    
+    // 必须在挖矿范围内
+    if (creep.pos.getRangeTo(nearestSource) > 1) return false;
+    
+    return true;
   }
 
   // 开始挖矿

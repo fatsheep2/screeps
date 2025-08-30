@@ -199,7 +199,7 @@ export class TaskDebugger {
     console.log(`分配状态: ${task.assignedTo ? '已分配' : '待分配'}`);
 
     if (task.assignedTo) {
-      const carrier = Game.creeps[task.assignedTo];
+      const carrier = Game.getObjectById(task.assignedTo) as Creep || Game.creeps[task.assignedTo];
       if (carrier) {
         console.log(`分配给: ${carrier.name} (${carrier.pos.x}, ${carrier.pos.y})`);
         console.log(`搬运工状态: ${carrier.memory.currentTaskId === taskId ? '正常' : '⚠️ 内存不一致'}`);
@@ -251,7 +251,8 @@ export class TaskDebugger {
         console.log(`\n目标 ${targetId} 有 ${taskList.length} 个相关任务:`);
         for (const task of taskList) {
           const status = task.assignedTo ? '已分配' : '待分配';
-          const carrier = task.assignedTo ? Game.creeps[task.assignedTo]?.name : '无';
+          const carrierObj = task.assignedTo ? (Game.getObjectById(task.assignedTo) as Creep || Game.creeps[task.assignedTo]) : null;
+          const carrier = carrierObj?.name || '无';
           console.log(`  - ${task.type} (${status}, 分配给: ${carrier})`);
         }
       }
@@ -272,7 +273,7 @@ export class TaskDebugger {
       const typedTask = task as Task;
 
       // 检查分配的creep是否还存在
-      if (typedTask.assignedTo && !Game.creeps[typedTask.assignedTo]) {
+      if (typedTask.assignedTo && !Game.getObjectById(typedTask.assignedTo) && !Game.creeps[typedTask.assignedTo]) {
         console.log(`  清理任务 ${typedTask.type} (creep已死亡)`);
         tasksToDelete.push(taskId);
       }
